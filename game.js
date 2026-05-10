@@ -8,6 +8,14 @@ const fishingRedHintEl = document.getElementById("fishing-red-hint");
 const fishingRedCountEl = document.getElementById("fishing-red-count");
 const fishingResultEl = document.getElementById("fishing-result");
 
+const detektorUI = document.getElementById("detektor-ui");
+const detektorZonesEl = document.getElementById("detektor-zones");
+const detektorSweepEl = document.getElementById("detektor-sweep");
+const detektorExtractFillEl = document.getElementById("detektor-extract-fill");
+const detektorRedHintEl = document.getElementById("detektor-red-hint");
+const detektorRedCountEl = document.getElementById("detektor-red-count");
+const detektorResultEl = document.getElementById("detektor-result");
+
 let fishingMode = false;
 let fishingLocked = false;
 let fishingStartTime = 0;
@@ -24,6 +32,23 @@ const FISHING_GREEN_ZONES = [
 const FISHING_SPIN_SPEED = 1.65;
 const FISHING_HITS_TO_LAND = 4;
 const BUBBLE_ACTIVATE_RADIUS = 130;
+
+const DETEKTOR_ACTIVATE_RADIUS = 120;
+const DETEKTOR_SWEEP_PERIOD_SEC = 2.85;
+const DETEKTOR_HITS_TO_RELIC = 5;
+const DETEKTOR_HIT_SLACK = 0.018;
+
+let detektorMode = false;
+let detektorLocked = false;
+let detektorStartTime = 0;
+let detektorProgress = 0;
+let detektorRedStreak = 0;
+/** @type {{ wx: number, taken: boolean } | null} */
+let activeDetektorSpot = null;
+/** @type {{ left: number, width: number }[]} */
+let detektorZones = [];
+
+let relicsFound = 0;
 
 const goldUI = document.getElementById("gold");
 const fishUI = document.getElementById("fish");
@@ -68,7 +93,7 @@ const camera = {
   x: 0
 };
 
-const dredgeSpots = [];
+const detektorSpots = [];
 const bubbleSpots = [];
 
 function hash(n) {
@@ -95,9 +120,9 @@ function seedWorld() {
     seabedFeatures.push({ wx, height: h, w: 100 + hash(wx + 99) * 80 });
   }
 
-  dredgeSpots.length = 0;
+  detektorSpots.length = 0;
   for (let i = 0; i < 8; i++) {
-    dredgeSpots.push({
+    detektorSpots.push({
       wx: -worldWidth / 2 + (i + 0.5) * (worldWidth / 8) + (Math.random() - 0.5) * 200,
       taken: false
     });
@@ -166,6 +191,25 @@ function isNeedleInGreen(theta) {
   return FISHING_GREEN_ZONES.some(([a0, a1]) => angleInSpan(theta, a0, a1));
 }
 
+function syncRelicsHud() {
+  if (relicsEl) relicsEl.textContent = `${Math.min(relicsFound, 6)} / 6`;
+}
+
+function getDetektorSpotNearPlayer() {
+  let best = null;
+  let bestD = DETEKTOR_ACTIVATE_RADIUS;
+  for (let i = 0; i < detektorSpots.length; i++) {
+    const spot = detektorSpots[i];
+    if (spot.taken) continue;
+    const d = Math.abs(spot.wx - player.x);
+    if (d < bestD) {
+      bestD = d;
+      best = spot;
+    }
+  }
+  return best;
+}
+
 function getBubbleNearPlayer() {
   let best = null;
   let bestD = BUBBLE_ACTIVATE_RADIUS;
@@ -202,7 +246,7 @@ function hideFishingRedHint() {
 }
 
 function tryStartFishing() {
-  if (fishingMode || fishingLocked) return;
+  if (fishingMode || fishingLocked || detektorMode || detektorLocked) return;
   if (!getBubbleNearPlayer()) return;
 
   fishingMode = true;
@@ -265,7 +309,6 @@ function endFishingSuccess() {
     gold += 8;
     if (fishUI) fishUI.innerText = caughtFish;
     if (goldUI) goldUI.innerText = gold;
-    if (relicsEl) relicsEl.textContent = `${Math.min(caughtFish, 6)} / 6`;
     fishingLocked = false;
     closeFishingPanel();
     if (fishingResultEl) fishingResultEl.classList.add("hidden");
@@ -289,8 +332,165 @@ function endFishingFail() {
 }
 
 function handleSpaceAction() {
-  if (fishingMode) tryFishingHit();
+  if (detektorMode) tryDetektorHit();
+  else if (fishingMode) tryFishingHit();
   else tryStartFishing();
+}
+
+function detektorSweepU(nowMs) {
+  const dt = (nowMs - detektorStartTime) / 1000;
+  let phase = ((dt % DETEKTOR_SWEEP_PERIOD_SEC) / DETEKTOR_SWEEP_PERIOD_SEC) * 2;
+  if (phase > 1) phase = 2 - phase;
+  return phase;
+}
+
+function randomDetektorZones() {
+  detektorZones = [];
+  const target = 2 + (Math.random() > 0.45 ? 1 : 0);
+  let guard = 0;
+  while (detektorZones.length < target && guard++ < 60) {
+    const width = 0.075 + Math.random() * 0.065;
+    const left = 0.04 + Math.random() * (0.92 - width);
+    const pad = 0.025;
+    const overlaps = detektorZones.some(
+      (z) => !(left + width + pad < z.left || left > z.left + z.width + pad)
+    );
+    if (!overlaps) detektorZones.push({ left, width });
+  }
+}
+
+function renderDetektorZones() {
+  if (!detektorZonesEl) return;
+  detektorZonesEl.innerHTML = "";
+  detektorZones.forEach((z) => {
+    const el = document.createElement("div");
+    el.className = "detektor-zone";
+    el.style.left = `${z.left * 100}%`;
+    el.style.width = `${z.width * 100}%`;
+    detektorZonesEl.appendChild(el);
+  });
+}
+
+function updateDetektorExtractBar() {
+  if (!detektorExtractFillEl) return;
+  const pct = Math.min(1, detektorProgress / DETEKTOR_HITS_TO_RELIC) * 100;
+  detektorExtractFillEl.style.width = `${pct}%`;
+}
+
+function showDetektorRedHint() {
+  if (detektorRedHintEl) detektorRedHintEl.classList.remove("hidden");
+  if (detektorRedCountEl) detektorRedCountEl.textContent = String(detektorRedStreak);
+}
+
+function hideDetektorRedHint() {
+  if (detektorRedHintEl) detektorRedHintEl.classList.add("hidden");
+}
+
+function tryStartDetektor() {
+  if (fishingMode || fishingLocked || detektorMode || detektorLocked) return;
+  const spot = getDetektorSpotNearPlayer();
+  if (!spot) return;
+
+  activeDetektorSpot = spot;
+  detektorMode = true;
+  detektorLocked = false;
+  detektorStartTime = performance.now();
+  detektorProgress = 0;
+  detektorRedStreak = 0;
+  randomDetektorZones();
+  renderDetektorZones();
+  updateDetektorExtractBar();
+
+  if (detektorUI) {
+    detektorUI.classList.remove("hidden");
+    detektorUI.setAttribute("aria-hidden", "false");
+  }
+  if (detektorResultEl) {
+    detektorResultEl.classList.add("hidden");
+    detektorResultEl.textContent = "";
+  }
+  hideDetektorRedHint();
+}
+
+function sweepInGreen(u) {
+  return detektorZones.some(
+    (z) => u >= z.left - DETEKTOR_HIT_SLACK && u <= z.left + z.width + DETEKTOR_HIT_SLACK
+  );
+}
+
+function tryDetektorHit() {
+  if (!detektorMode || detektorLocked) return;
+  const u = detektorSweepU(performance.now());
+
+  if (sweepInGreen(u)) {
+    detektorRedStreak = 0;
+    hideDetektorRedHint();
+    detektorProgress += 1;
+    updateDetektorExtractBar();
+    if (detektorProgress >= DETEKTOR_HITS_TO_RELIC) {
+      endDetektorSuccess();
+    }
+  } else {
+    detektorRedStreak++;
+    showDetektorRedHint();
+    if (detektorRedStreak >= 3) {
+      endDetektorFail();
+    }
+  }
+}
+
+function closeDetektorPanel() {
+  detektorMode = false;
+  activeDetektorSpot = null;
+  detektorProgress = 0;
+  updateDetektorExtractBar();
+  if (detektorSweepEl) detektorSweepEl.style.left = "0%";
+  if (detektorUI) {
+    detektorUI.classList.add("hidden");
+    detektorUI.setAttribute("aria-hidden", "true");
+  }
+}
+
+function endDetektorSuccess() {
+  detektorLocked = true;
+  const spot = activeDetektorSpot;
+  if (detektorResultEl) {
+    detektorResultEl.textContent = relicsFound < 6 ? "Relikvie vyzvednuta!" : "Poklad vyzvednut!";
+    detektorResultEl.className = "detektor-result ok";
+    detektorResultEl.classList.remove("hidden");
+  }
+  window.setTimeout(() => {
+    if (spot) spot.taken = true;
+    gold += 28 + Math.floor(Math.random() * 14);
+    if (relicsFound < 6) relicsFound++;
+    if (goldUI) goldUI.innerText = gold;
+    syncRelicsHud();
+    detektorLocked = false;
+    detektorRedStreak = 0;
+    closeDetektorPanel();
+    if (detektorResultEl) detektorResultEl.classList.add("hidden");
+  }, 780);
+}
+
+function endDetektorFail() {
+  detektorLocked = true;
+  if (detektorResultEl) {
+    detektorResultEl.textContent = "Signál ztracen — zkuste jiný průjezd.";
+    detektorResultEl.className = "detektor-result bad";
+    detektorResultEl.classList.remove("hidden");
+  }
+  window.setTimeout(() => {
+    detektorLocked = false;
+    detektorRedStreak = 0;
+    closeDetektorPanel();
+    if (detektorResultEl) detektorResultEl.classList.add("hidden");
+  }, 950);
+}
+
+function updateDetektorHudVisuals() {
+  if (!detektorMode || detektorLocked || !detektorSweepEl) return;
+  const u = detektorSweepU(performance.now());
+  detektorSweepEl.style.left = `${u * 100}%`;
 }
 
 window.addEventListener("keydown", (e) => {
@@ -299,6 +499,9 @@ window.addEventListener("keydown", (e) => {
     e.preventDefault();
     if (!e.repeat) handleSpaceAction();
   }
+  if ((e.key === "f" || e.key === "F") && !e.repeat) {
+    tryStartDetektor();
+  }
 });
 
 window.addEventListener("keyup", (e) => {
@@ -306,7 +509,7 @@ window.addEventListener("keyup", (e) => {
 });
 
 function update() {
-  if (fishingMode) return;
+  if (fishingMode || detektorMode) return;
 
   if (keys["a"] || keys["arrowleft"]) player.x -= player.speed;
   if (keys["d"] || keys["arrowright"]) player.x += player.speed;
@@ -664,11 +867,12 @@ function drawBoatSide(screenX, surfaceY, bob) {
   ctx.restore();
 }
 
-function drawDredgeHints(surfaceY) {
-  dredgeSpots.forEach((spot) => {
+function drawDetektorHints(surfaceY) {
+  detektorSpots.forEach((spot) => {
+    if (spot.taken) return;
     const sx = spot.wx - camera.x;
     if (sx < 80 || sx > canvas.width - 80) return;
-    const on = Math.abs(spot.wx - player.x) < 120;
+    const on = Math.abs(spot.wx - player.x) < DETEKTOR_ACTIVATE_RADIUS;
     if (!on) return;
     const wx = spot.wx;
     const groundY =
@@ -686,7 +890,7 @@ function drawDredgeHints(surfaceY) {
     ctx.font = "600 13px Georgia, serif";
     ctx.fillStyle = "rgba(240,235,220,0.95)";
     ctx.textAlign = "center";
-    ctx.fillText("DREDGE [F]", sx, groundY - 52);
+    ctx.fillText("Detektor [F]", sx, groundY - 52);
     ctx.restore();
   });
 }
@@ -736,7 +940,7 @@ function gameLoop() {
   drawWaterSurface(surfaceY);
   drawBubbles(surfaceY);
 
-  if (!fishingMode && getBubbleNearPlayer()) {
+  if (!fishingMode && !detektorMode && getBubbleNearPlayer()) {
     ctx.save();
     ctx.font = "600 15px Georgia, serif";
     ctx.textAlign = "center";
@@ -744,6 +948,17 @@ function gameLoop() {
     ctx.shadowColor = "rgba(0,0,0,0.85)";
     ctx.shadowBlur = 8;
     ctx.fillText("SPACE — začít rybařit", canvas.width / 2, surfaceY - 28);
+    ctx.restore();
+  }
+
+  if (!fishingMode && !detektorMode && getDetektorSpotNearPlayer()) {
+    ctx.save();
+    ctx.font = "600 15px Georgia, serif";
+    ctx.textAlign = "center";
+    ctx.fillStyle = "rgba(180,230,210,0.95)";
+    ctx.shadowColor = "rgba(0,0,0,0.85)";
+    ctx.shadowBlur = 8;
+    ctx.fillText("F — detektor / hledání pokladu", canvas.width / 2, surfaceY - 50);
     ctx.restore();
   }
 
@@ -769,7 +984,7 @@ function gameLoop() {
 
   drawBoatSide(screenBoatX, surfaceY, bob);
 
-  drawDredgeHints(surfaceY);
+  drawDetektorHints(surfaceY);
 
   sparkles.forEach((sp) => {
     const sx = sp.wx - camera.x;
@@ -792,9 +1007,11 @@ function gameLoop() {
   if (dangerUI) dangerUI.innerText = danger;
 
   updateFishingHudVisuals();
+  updateDetektorHudVisuals();
 
   requestAnimationFrame(gameLoop);
 }
 
+syncRelicsHud();
 initFishingRingSvg();
 gameLoop();

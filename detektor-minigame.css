@@ -1,0 +1,205 @@
+/* Minihra detektoru — sonarový pás (vizuálně jiný než kruhové rybaření) */
+#detektor-ui {
+  position: fixed;
+  left: 50%;
+  bottom: 8%;
+  transform: translateX(-50%);
+  width: min(580px, 95vw);
+  z-index: 45;
+  pointer-events: none;
+}
+
+#detektor-ui:not(.hidden) {
+  pointer-events: auto;
+}
+
+.detektor-panel {
+  background: linear-gradient(165deg, #070c10 0%, #0e1620 45%, #081018 100%);
+  border: 3px solid #3d5a52;
+  border-radius: 2px;
+  box-shadow:
+    inset 0 0 0 1px rgba(80, 160, 140, 0.25),
+    0 0 0 2px #1a2420,
+    0 16px 48px rgba(0, 0, 0, 0.85);
+  padding: 18px 20px 22px;
+  color: #c8e8e0;
+  font-family: "EB Garamond", Georgia, serif;
+}
+
+.detektor-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 14px;
+  border-bottom: 1px solid rgba(60, 120, 100, 0.35);
+  padding-bottom: 10px;
+}
+
+.detektor-panel-header h2 {
+  font-family: "Cinzel", serif;
+  font-size: 1.05rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #7ecfb8;
+  font-weight: 600;
+}
+
+.detektor-tag {
+  font-size: 0.68rem;
+  letter-spacing: 0.18em;
+  padding: 4px 10px;
+  background: rgba(40, 90, 78, 0.55);
+  border: 1px solid rgba(120, 200, 170, 0.35);
+  color: #aee8d8;
+}
+
+.detektor-scan-frame {
+  position: relative;
+  border: 2px solid #2a4540;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      transparent 0,
+      transparent 11px,
+      rgba(40, 120, 100, 0.06) 11px,
+      rgba(40, 120, 100, 0.06) 12px
+    ),
+    linear-gradient(180deg, #0a1418 0%, #122428 40%, #1a3238 100%);
+  height: 112px;
+  overflow: hidden;
+  box-shadow: inset 0 0 40px rgba(0, 40, 35, 0.45);
+}
+
+.detektor-scan-frame::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 120% 80% at 50% 100%, rgba(30, 140, 110, 0.12), transparent 65%);
+  pointer-events: none;
+}
+
+#detektor-zones {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.detektor-zone {
+  position: absolute;
+  top: 18%;
+  bottom: 22%;
+  border-radius: 2px;
+  background: linear-gradient(
+    180deg,
+    rgba(50, 220, 140, 0.15),
+    rgba(30, 180, 110, 0.35)
+  );
+  box-shadow:
+    inset 0 0 12px rgba(100, 255, 200, 0.2),
+    0 0 16px rgba(40, 200, 140, 0.15);
+  border: 1px solid rgba(120, 240, 190, 0.45);
+}
+
+#detektor-sweep {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  margin-left: -2px;
+  left: 0%;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0),
+    rgba(200, 255, 245, 0.95) 35%,
+    rgba(180, 250, 230, 0.85) 50%,
+    rgba(200, 255, 245, 0.95) 65%,
+    rgba(255, 255, 255, 0)
+  );
+  box-shadow:
+    0 0 18px rgba(160, 255, 230, 0.9),
+    0 0 40px rgba(80, 220, 180, 0.45);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.detektor-scan-labels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 8px;
+  font-size: 0.78rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #5a9084;
+}
+
+.detektor-extract-wrap {
+  margin-top: 16px;
+}
+
+.detektor-extract-wrap span {
+  display: block;
+  font-size: 0.85rem;
+  color: #8ab8ae;
+  margin-bottom: 6px;
+}
+
+.detektor-extract-bar {
+  height: 10px;
+  background: #0a1214;
+  border: 1px solid #2a4038;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+#detektor-extract-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #2a8068, #56d4a8);
+  box-shadow: 0 0 12px rgba(80, 220, 170, 0.5);
+  transition: width 0.15s ease-out;
+}
+
+.detektor-instruct {
+  margin-top: 14px;
+  font-size: 0.94rem;
+  line-height: 1.45;
+  color: #9ec4b8;
+}
+
+.detektor-instruct kbd {
+  display: inline-block;
+  padding: 2px 8px;
+  margin: 0 2px;
+  border-radius: 3px;
+  border: 1px solid rgba(100, 160, 140, 0.45);
+  background: rgba(0, 25, 22, 0.6);
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
+  color: #dffaf2;
+}
+
+.detektor-red-hint {
+  margin-top: 10px;
+  font-size: 0.9rem;
+  color: #c98888;
+}
+
+.detektor-result {
+  margin-top: 12px;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.detektor-result.ok {
+  color: #56d4a8;
+}
+
+.detektor-result.bad {
+  color: #c98888;
+}
+
+@media (max-width: 520px) {
+  .detektor-scan-frame {
+    height: 96px;
+  }
+}

@@ -6,6 +6,7 @@
   <title>Temné moře</title>
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="fishing-minigame.css">
+  <link rel="stylesheet" href="detektor-minigame.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600&family=EB+Garamond:ital,wght@0,500;0,600;1,500&display=swap" rel="stylesheet">
@@ -35,7 +36,7 @@
   </div>
 
   <div id="hud-bottom">
-    <div id="keys-hint"><kbd>A</kbd> <kbd>D</kbd> plavba · u bublin <kbd>SPACE</kbd> rybaření</div>
+    <div id="keys-hint"><kbd>A</kbd> <kbd>D</kbd> plavba · bubliny <kbd>SPACE</kbd> · detektor <kbd>F</kbd></div>
   </div>
 
 <div id="fishing-ui" class="hidden" aria-hidden="true">
@@ -74,6 +75,34 @@
       <p id="fishing-red-hint" class="fishing-red-hint hidden">Chyby v řadě: <span id="fishing-red-count">0</span> / 3</p>
       <p id="fishing-result" class="fishing-result hidden"></p>
     </div>
+  </div>
+</div>
+
+<div id="detektor-ui" class="hidden" aria-hidden="true">
+  <div class="detektor-panel">
+    <div class="detektor-panel-header">
+      <h2>Sonar dna</h2>
+      <span class="detektor-tag">Detektor</span>
+    </div>
+    <div class="detektor-scan-frame">
+      <div id="detektor-zones"></div>
+      <div id="detektor-sweep" aria-hidden="true"></div>
+    </div>
+    <div class="detektor-scan-labels">
+      <span>Šířka pásu</span>
+      <span>Hloubka snímku</span>
+    </div>
+    <div class="detektor-extract-wrap">
+      <span>Vytěžení signálu</span>
+      <div class="detektor-extract-bar">
+        <div id="detektor-extract-fill"></div>
+      </div>
+    </div>
+    <p class="detektor-instruct">
+      Stiskni <kbd>SPACE</kbd>, když je <strong>zářící čára</strong> na <strong>zeleném pásu</strong> (relikvie).
+    </p>
+    <p id="detektor-red-hint" class="detektor-red-hint hidden">Chyby v řadě: <span id="detektor-red-count">0</span> / 3</p>
+    <p id="detektor-result" class="detektor-result hidden"></p>
   </div>
 </div>
 
