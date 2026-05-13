@@ -543,18 +543,28 @@ function formatTime(h) {
 
 function drawSky(surfaceY) {
   const g = ctx.createLinearGradient(0, 0, 0, surfaceY);
-  g.addColorStop(0, "#2a3a52");
-  g.addColorStop(0.45, "#4a5f76");
-  g.addColorStop(0.85, "#6a7d8e");
-  g.addColorStop(1, "#8a9bab");
+  g.addColorStop(0, "#1a0f0f");
+  g.addColorStop(0.45, "#2e1a18");
+  g.addColorStop(0.85, "#3d2820");
+  g.addColorStop(1, "#4a3028");
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, canvas.width, surfaceY);
 
-  ctx.fillStyle = "rgba(180,200,220,0.08)";
-  for (let i = 0; i < 5; i++) {
-    const y = 30 + i * 35 + Math.sin(performance.now() * 0.0003 + i) * 8;
+  // dark storm clouds
+  for (let i = 0; i < 8; i++) {
+    const t = performance.now() * 0.00008;
+    const cx = ((i * 270 + t * 18) % (canvas.width + 400)) - 200;
+    const cy = 18 + (i % 3) * 38 + Math.sin(t + i) * 6;
+    const rx = 140 + (i % 3) * 55;
+    const ry = 28 + (i % 3) * 12;
+    const alpha = 0.18 + (i % 4) * 0.07;
+    ctx.fillStyle = `rgba(28,16,14,${alpha})`;
     ctx.beginPath();
-    ctx.ellipse(canvas.width * 0.3 + i * 180, y, 120 + i * 20, 22, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = `rgba(45,25,20,${alpha * 0.5})`;
+    ctx.beginPath();
+    ctx.ellipse(cx + 60, cy - 12, rx * 0.7, ry * 0.8, 0, 0, Math.PI * 2);
     ctx.fill();
   }
 }
@@ -570,7 +580,7 @@ function drawCoastSilhouette(surfaceY, parallax) {
   }
   ctx.lineTo(canvas.width, surfaceY);
   ctx.closePath();
-  ctx.fillStyle = "#1c2633";
+  ctx.fillStyle = "#0e1510";
   ctx.fill();
   ctx.restore();
 }
@@ -587,7 +597,7 @@ function drawTrees(wxOffset, surfaceY, parallax, count, scale) {
     if (wx < -80 || wx > canvas.width + 80) continue;
     const w = 14 * scale;
     const h = (50 + hash(i + wxOffset) * 35) * scale;
-    ctx.fillStyle = "#152028";
+    ctx.fillStyle = "#090f0b";
     ctx.beginPath();
     ctx.moveTo(wx, surfaceY - h);
     ctx.lineTo(wx + w, surfaceY);
@@ -688,9 +698,9 @@ function drawWaterSurface(surfaceY) {
 
 function drawUnderwater(surfaceY) {
   const g = ctx.createLinearGradient(0, surfaceY, 0, canvas.height);
-  g.addColorStop(0, "#152a38");
-  g.addColorStop(0.35, "#0d1a24");
-  g.addColorStop(1, "#050a10");
+  g.addColorStop(0, "#0d1f18");
+  g.addColorStop(0.35, "#091510");
+  g.addColorStop(1, "#030808");
   ctx.fillStyle = g;
   ctx.fillRect(0, surfaceY, canvas.width, canvas.height - surfaceY);
 }
@@ -711,8 +721,8 @@ function drawSeabed(surfaceY) {
   ctx.lineTo(0, canvas.height);
   ctx.closePath();
   const gb = ctx.createLinearGradient(0, canvas.height - 120, 0, canvas.height);
-  gb.addColorStop(0, "#2d3540");
-  gb.addColorStop(1, "#121620");
+  gb.addColorStop(0, "#1e2218");
+  gb.addColorStop(1, "#0a0c08");
   ctx.fillStyle = gb;
   ctx.fill();
 
@@ -736,16 +746,16 @@ function drawLightCone(screenBoatX, keelY, surfaceY) {
   const halfW = 160 + Math.sin(performance.now() * 0.001) * 10;
 
   const cone = ctx.createLinearGradient(screenBoatX, keelY, screenBoatX, canvas.height - 20);
-  cone.addColorStop(0, "rgba(200,230,255,0.22)");
-  cone.addColorStop(0.25, "rgba(120,160,200,0.08)");
-  cone.addColorStop(1, "rgba(20,40,60,0)");
+  cone.addColorStop(0, "rgba(160,220,180,0.32)");
+  cone.addColorStop(0.3, "rgba(80,160,120,0.12)");
+  cone.addColorStop(1, "rgba(10,40,20,0)");
 
   ctx.save();
   ctx.beginPath();
-  ctx.moveTo(screenBoatX - 18, keelY + 4);
+  ctx.moveTo(screenBoatX - 14, keelY + 4);
   ctx.lineTo(screenBoatX - halfW, canvas.height - 30);
   ctx.lineTo(screenBoatX + halfW, canvas.height - 30);
-  ctx.lineTo(screenBoatX + 18, keelY + 4);
+  ctx.lineTo(screenBoatX + 14, keelY + 4);
   ctx.closePath();
   ctx.fillStyle = cone;
   ctx.fill();
@@ -753,11 +763,11 @@ function drawLightCone(screenBoatX, keelY, surfaceY) {
 
   ctx.save();
   ctx.globalCompositeOperation = "screen";
-  const soft = ctx.createRadialGradient(screenBoatX, keelY + depth * 0.35, 0, screenBoatX, keelY + depth * 0.35, halfW * 1.1);
-  soft.addColorStop(0, "rgba(180,210,240,0.15)");
+  const soft = ctx.createRadialGradient(screenBoatX, keelY + depth * 0.3, 0, screenBoatX, keelY + depth * 0.3, halfW * 1.2);
+  soft.addColorStop(0, "rgba(120,200,160,0.22)");
   soft.addColorStop(1, "rgba(0,0,0,0)");
   ctx.fillStyle = soft;
-  ctx.fillRect(screenBoatX - halfW * 1.2, keelY, halfW * 2.4, depth);
+  ctx.fillRect(screenBoatX - halfW * 1.3, keelY, halfW * 2.6, depth);
   ctx.restore();
 }
 
@@ -774,7 +784,7 @@ function drawFishEntity(f, surfaceY) {
   ctx.translate(worldScreenX, fy);
   ctx.rotate(ang);
   const r = f.size;
-  const body = `hsl(${180 + f.hue * 40}, 45%, ${42 + f.hue * 15}%)`;
+  const body = `hsl(${140 + f.hue * 30}, 25%, ${22 + f.hue * 12}%)`;
   ctx.fillStyle = body;
   ctx.beginPath();
   ctx.ellipse(0, 0, r * 1.2, r * 0.55, 0, 0, Math.PI * 2);
@@ -792,7 +802,7 @@ function drawFishEntity(f, surfaceY) {
 function drawSeaweed(wx, baseY) {
   const sx = wx - camera.x;
   if (sx < -20 || sx > canvas.width + 20) return;
-  ctx.strokeStyle = "rgba(30,55,45,0.85)";
+  ctx.strokeStyle = "rgba(20,38,28,0.95)";
   ctx.lineWidth = 3;
   ctx.lineCap = "round";
   for (let s = 0; s < 3; s++) {
@@ -811,58 +821,134 @@ function drawSeaweed(wx, baseY) {
   }
 }
 
+function drawJellyfish(surfaceY) {
+  const t = performance.now() * 0.001;
+  const jellies = [
+    { wx: 800, depth: 0.45 }, { wx: -400, depth: 0.55 },
+    { wx: 2200, depth: 0.38 }, { wx: -1800, depth: 0.62 }
+  ];
+  jellies.forEach((j, i) => {
+    const sx = j.wx - camera.x;
+    if (sx < -60 || sx > canvas.width + 60) return;
+    const fy = surfaceY + (canvas.height - surfaceY) * j.depth + Math.sin(t * 0.6 + i * 1.8) * 14;
+    const pulse = 0.85 + Math.sin(t * 1.8 + i) * 0.15;
+    ctx.save();
+    ctx.translate(sx, fy);
+    // bell
+    const jr = 18 * pulse;
+    const jg = ctx.createRadialGradient(0, 0, 0, 0, 0, jr);
+    jg.addColorStop(0, "rgba(200,120,180,0.45)");
+    jg.addColorStop(0.7, "rgba(160,80,140,0.25)");
+    jg.addColorStop(1, "rgba(100,40,100,0)");
+    ctx.fillStyle = jg;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, jr, jr * 0.6, 0, Math.PI, 0);
+    ctx.fill();
+    // tentacles
+    ctx.strokeStyle = "rgba(200,100,180,0.18)";
+    ctx.lineWidth = 1;
+    for (let k = -2; k <= 2; k++) {
+      ctx.beginPath();
+      ctx.moveTo(k * 5, 0);
+      ctx.quadraticCurveTo(k * 5 + Math.sin(t + k) * 8, 18, k * 4 + Math.sin(t * 1.2 + k) * 12, 32);
+      ctx.stroke();
+    }
+    ctx.restore();
+  });
+}
+
 function boatBob() {
   return Math.sin(performance.now() * 0.0018) * 2;
 }
 
 function drawBoatSide(screenX, surfaceY, bob) {
   const y = surfaceY - 8 + bob;
-
   ctx.save();
   ctx.translate(screenX, y);
 
-  ctx.fillStyle = "#2a2220";
+  // hull dark bottom stripe
+  ctx.fillStyle = "#1a1210";
   ctx.beginPath();
-  ctx.moveTo(-85, -6);
-  ctx.lineTo(78, -6);
-  ctx.lineTo(88, 16);
-  ctx.lineTo(-88, 16);
+  ctx.moveTo(-90, -4);
+  ctx.lineTo(82, -4);
+  ctx.lineTo(92, 18);
+  ctx.lineTo(-92, 18);
   ctx.closePath();
   ctx.fill();
 
-  ctx.fillStyle = "#1e3a52";
-  ctx.fillRect(-75, -38, 150, 32);
-  ctx.fillStyle = "#2a5080";
-  ctx.fillRect(-65, -48, 55, 20);
-  ctx.fillRect(5, -42, 48, 16);
-
-  ctx.fillStyle = "#c43c3c";
+  // hull red band
+  ctx.fillStyle = "#7a2020";
   ctx.beginPath();
-  ctx.moveTo(-95, 16);
-  ctx.lineTo(92, 16);
+  ctx.moveTo(-92, 18);
+  ctx.lineTo(92, 18);
   ctx.lineTo(88, 32);
   ctx.lineTo(-90, 32);
   ctx.closePath();
   ctx.fill();
 
-  ctx.fillStyle = "#eaeaea";
+  // white hull upper
+  ctx.fillStyle = "#d8cfc0";
   ctx.beginPath();
-  ctx.moveTo(-70, -6);
-  ctx.lineTo(65, -6);
-  ctx.lineTo(62, 8);
-  ctx.lineTo(-68, 8);
+  ctx.moveTo(-78, -4);
+  ctx.lineTo(68, -4);
+  ctx.lineTo(65, 10);
+  ctx.lineTo(-74, 10);
   ctx.closePath();
   ctx.fill();
 
-  ctx.fillStyle = "#1a1a1a";
+  // cabin base dark
+  ctx.fillStyle = "#2c2018";
+  ctx.fillRect(-72, -44, 140, 40);
+
+  // cabin cream walls
+  ctx.fillStyle = "#c8b898";
+  ctx.fillRect(-68, -40, 64, 36);
+  ctx.fillRect(6, -36, 52, 32);
+
+  // cabin windows
+  ctx.fillStyle = "#1a2830";
+  ctx.fillRect(-56, -34, 18, 14);
+  ctx.fillRect(-30, -34, 18, 14);
+  ctx.fillStyle = "rgba(200,220,180,0.25)";
+  ctx.fillRect(-56, -34, 18, 14);
+  ctx.fillRect(-30, -34, 18, 14);
+
+  // cabin roof dark
+  ctx.fillStyle = "#1e1612";
+  ctx.fillRect(-72, -48, 140, 8);
+
+  // crane/mast arm
+  ctx.strokeStyle = "#4a3828";
+  ctx.lineWidth = 3;
   ctx.beginPath();
-  ctx.arc(-30, -20, 5, 0, Math.PI * 2);
-  ctx.arc(35, -20, 5, 0, Math.PI * 2);
+  ctx.moveTo(28, -44);
+  ctx.lineTo(28, -80);
+  ctx.stroke();
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(28, -72);
+  ctx.lineTo(58, -52);
+  ctx.stroke();
+  // lantern on mast
+  ctx.fillStyle = "rgba(255,200,100,0.9)";
+  ctx.beginPath();
+  ctx.arc(28, -82, 4, 0, Math.PI * 2);
+  ctx.fill();
+  const lanternGlow = ctx.createRadialGradient(28, -82, 1, 28, -82, 18);
+  lanternGlow.addColorStop(0, "rgba(255,200,100,0.5)");
+  lanternGlow.addColorStop(1, "rgba(255,200,100,0)");
+  ctx.fillStyle = lanternGlow;
+  ctx.beginPath();
+  ctx.arc(28, -82, 18, 0, Math.PI * 2);
   ctx.fill();
 
-  ctx.strokeStyle = "rgba(0,0,0,0.35)";
+  // waterline reflection shimmer
+  ctx.strokeStyle = "rgba(180,160,140,0.18)";
   ctx.lineWidth = 1;
-  ctx.strokeRect(-75, -38, 150, 32);
+  ctx.beginPath();
+  ctx.moveTo(-88, 34);
+  ctx.lineTo(88, 34);
+  ctx.stroke();
 
   ctx.restore();
 }
@@ -905,7 +991,7 @@ function drawVignette() {
     canvas.height * 0.75
   );
   v.addColorStop(0, "rgba(0,0,0,0)");
-  v.addColorStop(1, "rgba(0,15,25,0.55)");
+  v.addColorStop(1, "rgba(0,5,3,0.72)");
   ctx.fillStyle = v;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 }
@@ -981,6 +1067,7 @@ function gameLoop() {
   drawLightCone(screenBoatX, keelY, surfaceY);
 
   fish.forEach((f) => drawFishEntity(f, surfaceY));
+  drawJellyfish(surfaceY);
 
   drawBoatSide(screenBoatX, surfaceY, bob);
 
