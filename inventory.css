@@ -1,0 +1,109 @@
+#inventory-ui {
+  position: fixed;
+  right: 22px;
+  top: 80px;
+  width: min(340px, 90vw);
+  z-index: 40;
+  pointer-events: none;
+}
+
+#inventory-ui:not(.hidden) {
+  pointer-events: auto;
+}
+
+.inventory-panel {
+  background: rgba(10, 6, 4, 0.92);
+  border: 2px solid #5a4228;
+  border-radius: 3px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.85);
+  padding: 16px 18px;
+  color: #d8cbb0;
+  font-family: "EB Garamond", Georgia, serif;
+}
+
+.inventory-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(120,90,45,0.4);
+}
+
+.inventory-header h3 {
+  font-family: "Cinzel", serif;
+  font-size: 0.95rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #d6b876;
+}
+
+.inventory-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.inventory-slot {
+  aspect-ratio: 1;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid #3e2d1c;
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  cursor: default;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.inventory-slot:hover {
+  background: rgba(40, 30, 20, 0.5);
+  border-color: #7e5c38;
+}
+
+.inventory-slot .fish-icon {
+  font-size: 1.6rem;
+}
+
+.inventory-slot .fish-count {
+  position: absolute;
+  bottom: 2px;
+  right: 4px;
+  font-family: "Cinzel", serif;
+  font-size: 0.72rem;
+  color: #d8cbb0;
+  text-shadow: 0 1px 2px #000;
+}
+
+/* Rarity classes for slots */
+.inventory-slot.rarity-common { border-color: #555; }
+.inventory-slot.rarity-uncommon { border-color: #3b7a57; box-shadow: inset 0 0 4px rgba(59,122,87,0.3); }
+.inventory-slot.rarity-rare { border-color: #3b5e7a; box-shadow: inset 0 0 5px rgba(59,94,122,0.4); }
+.inventory-slot.rarity-aberrant { border-color: #7a3b68; box-shadow: inset 0 0 7px rgba(122,59,104,0.6); animation: aberrant-glow 2s infinite ease-in-out; }
+
+@keyframes aberrant-glow {
+  0% { box-shadow: inset 0 0 4px rgba(122,59,104,0.4), 0 0 2px rgba(122,59,104,0.2); }
+  50% { box-shadow: inset 0 0 10px rgba(122,59,104,0.8), 0 0 5px rgba(122,59,104,0.5); }
+  100% { box-shadow: inset 0 0 4px rgba(122,59,104,0.4), 0 0 2px rgba(122,59,104,0.2); }
+}
+
+.inventory-tooltip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #0d0905;
+  border: 1px solid #6a4a28;
+  padding: 6px 10px;
+  width: 140px;
+  text-align: center;
+  z-index: 60;
+  pointer-events: none;
+  font-size: 0.8rem;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.8);
+  display: none;
+}
+
+.inventory-slot:hover .inventory-tooltip {
+  display: block;
+}

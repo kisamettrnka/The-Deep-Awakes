@@ -4,14 +4,23 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Temné moře</title>
-  <link rel="stylesheet" href="style.css">
-  <link rel="stylesheet" href="fishing-minigame.css">
-  <link rel="stylesheet" href="detektor-minigame.css">
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="stylesheet" href="style.css?v=4">
+  <link rel="stylesheet" href="fishing-minigame.css?v=4">
+  <link rel="stylesheet" href="detektor-minigame.css?v=4">
+  <link rel="stylesheet" href="market.css?v=4">
+  <link rel="stylesheet" href="inventory.css?v=4">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600&family=EB+Garamond:ital,wght@0,500;0,600;1,500&display=swap" rel="stylesheet">
 </head>
 <body>
+<div id="error-log" style="position: absolute; top: 0; left: 0; z-index: 9999; color: red; background: black; padding: 10px; font-family: monospace;"></div>
+<script>
+  window.onerror = function(message, source, lineno, colno, error) {
+    document.getElementById('error-log').innerHTML += message + ' at line ' + lineno + '<br>';
+  };
+</script>
 
   <div id="hud">
     <aside id="hud-left">
@@ -19,7 +28,13 @@
       <p id="quest">Seber všechny relikvie <span id="relics">0 / 6</span></p>
       <div id="stats-mini">
         <span>🐟 <span id="fish">0</span></span>
-        <span>⚠ <span id="danger">0</span></span>
+      </div>
+      <div id="danger-bar-wrap">
+        <span id="danger-bar-label">⚠ Šílenství</span>
+        <div id="danger-bar-track">
+          <div id="danger-bar-fill"></div>
+        </div>
+        <span id="danger" style="font-family:'Cinzel',serif; font-size:0.78rem; color:#806050; min-width:1.4em;">0</span>
       </div>
     </aside>
 
@@ -36,8 +51,165 @@
   </div>
 
   <div id="hud-bottom">
-    <div id="keys-hint"><kbd>A</kbd> <kbd>D</kbd> plavba · bubliny <kbd>SPACE</kbd> · detektor <kbd>F</kbd></div>
+    <div id="keys-hint"><kbd>A</kbd> <kbd>D</kbd> plavba · bubliny <kbd>SPACE</kbd> · detektor <kbd>F</kbd> · inventář <kbd>I</kbd> · kotviště <kbd>E</kbd></div>
   </div>
+
+<!-- DOCK MENU OVERLAY -->
+<div id="dock-menu-ui" class="hidden">
+  <div class="market-panel">
+    <div class="market-header">
+      <h2>Přístav</h2>
+      <span class="market-tag">Bezpečí</span>
+    </div>
+    <div class="market-body">
+      <p>Zakotvil jsi v bezpečném přístavu. Co chceš udělat?</p>
+      <div class="dock-menu-buttons">
+        <button id="btn-open-market" class="market-btn">Prodat úlovek (Trh)</button>
+        <button id="btn-repair-ship" class="market-btn">Odpočinout a zklidnit mysl ($25)</button>
+        <button id="btn-leave-dock" class="market-btn btn-secondary">Vyplout na moře</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MARKET OVERLAY -->
+<div id="market-ui" class="hidden">
+  <div class="market-panel">
+    <div class="market-header">
+      <h2>Rybí trh</h2>
+      <span class="market-tag">Obchod</span>
+    </div>
+    <div class="market-body">
+      <div class="market-row">
+        <span>Běžné ryby:</span>
+        <span id="market-common-count" class="market-val">0x</span>
+      </div>
+      <div class="market-row">
+        <span>Neobvyklé ryby:</span>
+        <span id="market-uncommon-count" class="market-val">0x</span>
+      </div>
+      <div class="market-row">
+        <span>Vzácné ryby:</span>
+        <span id="market-rare-count" class="market-val">0x</span>
+      </div>
+      <div class="market-row">
+        <span>Abnormální ryby:</span>
+        <span id="market-aberrant-count" class="market-val">0x</span>
+      </div>
+      <div class="market-row" id="market-reef-row" style="border-top:1px solid rgba(255,80,120,0.3); margin-top:6px; padding-top:6px;">
+        <span style="color:#ff7099;">🪸 Korálové ryby:</span>
+        <span id="market-reef-count" class="market-val" style="color:#ff7099;">0x</span>
+      </div>
+      <div class="market-row market-total">
+        <span>Celková hodnota:</span>
+        <span class="market-gold">$<span id="market-sell-value">0</span></span>
+      </div>
+      <button id="btn-sell-fish" class="market-btn">Prodat vše</button>
+      <button id="btn-back-market" class="market-btn btn-secondary">Zpět</button>
+      <div id="market-result" class="market-result hidden"></div>
+    </div>
+    <div class="market-close-hint">Zpět do menu přístavu stisknutím <kbd>E</kbd></div>
+  </div>
+</div>
+
+<!-- OIL RIG UI -->
+<div id="oilrig-ui" class="hidden">
+  <div class="market-panel">
+    <div class="market-header">
+      <h2>Ropná věž</h2>
+      <span class="market-tag">Lodní vylepšení</span>
+    </div>
+    <div class="market-body">
+      <div class="market-row" style="margin-bottom: 12px;">
+        <div style="text-align: left;">
+          <strong>Motor</strong> <span id="upgrade-engine-level">(Lvl 1)</span>
+          <div style="font-size:0.8rem; color:#888;">Zvyšuje rychlost plavby.</div>
+        </div>
+        <button id="btn-upgrade-engine" class="market-btn" style="width:110px;">$150</button>
+      </div>
+      <div class="market-row" style="margin-bottom: 12px;">
+        <div style="text-align: left;">
+          <strong>Světla</strong> <span id="upgrade-lights-level">(Lvl 1)</span>
+          <div style="font-size:0.8rem; color:#888;">Širší a silnější kužel světla.</div>
+        </div>
+        <button id="btn-upgrade-lights" class="market-btn" style="width:110px;">$120</button>
+      </div>
+      <div class="market-row" style="margin-bottom: 12px;">
+        <div style="text-align: left;">
+          <strong>Trup</strong> <span id="upgrade-hull-level">(Lvl 1)</span>
+          <div style="font-size:0.8rem; color:#888;">Odolnost proti šílenství/útokům.</div>
+        </div>
+        <button id="btn-upgrade-hull" class="market-btn" style="width:110px;">$200</button>
+      </div>
+      <button id="btn-back-oilrig" class="market-btn btn-secondary">Odplout</button>
+      <div id="oilrig-result" class="market-result hidden"></div>
+    </div>
+    <div class="market-close-hint">Zpět na moře stisknutím <kbd>E</kbd></div>
+  </div>
+</div>
+
+<!-- LIGHTHOUSE SHOP UI -->
+<div id="lighthouse-shop-ui" class="hidden">
+  <div class="market-panel">
+    <div class="market-header">
+      <h2>Maják</h2>
+      <span class="market-tag">Vylepšení prutu</span>
+    </div>
+    <div class="market-body">
+      <div class="market-row" style="margin-bottom: 12px;">
+        <div style="text-align: left;">
+          <strong>Kvalita prutu</strong> <span id="upgrade-rod-quality-level">(Lvl 1)</span>
+          <div style="font-size:0.8rem; color:#888;">Širší zelená zóna při chytání.</div>
+        </div>
+        <button id="btn-upgrade-rod-quality" class="market-btn" style="width:110px;">$80</button>
+      </div>
+      <div class="market-row" style="margin-bottom: 12px;">
+        <div style="text-align: left;">
+          <strong>Vlasec</strong> <span id="upgrade-rod-line-level">(Lvl 1)</span>
+          <div style="font-size:0.8rem; color:#888;">Toleruje více chyb před útěkem.</div>
+        </div>
+        <button id="btn-upgrade-rod-line" class="market-btn" style="width:110px;">$100</button>
+      </div>
+      <div class="market-row" style="margin-bottom: 12px;">
+        <div style="text-align: left;">
+          <strong>Návnada</strong> <span id="upgrade-rod-bait-level">(Lvl 1)</span>
+          <div style="font-size:0.8rem; color:#888;">Zvyšuje dosah chytání.</div>
+        </div>
+        <button id="btn-upgrade-rod-bait" class="market-btn" style="width:110px;">$120</button>
+      </div>
+      <button id="btn-back-lighthouse" class="market-btn btn-secondary">Zpět k lodi</button>
+      <div id="lighthouse-result" class="market-result hidden"></div>
+    </div>
+    <div class="market-close-hint">Zpět na moře stisknutím <kbd>E</kbd></div>
+  </div>
+</div>
+
+<!-- INVENTORY OVERLAY -->
+<div id="inventory-ui" class="hidden">
+  <div class="inventory-panel">
+    <div class="inventory-header">
+      <h3>Podpalubí (Inventář)</h3>
+      <span id="inventory-capacity" style="font-size: 0.8rem; color: #a89878;">Kapacity: 0 / 12</span>
+    </div>
+    <div class="inventory-grid" id="inventory-grid">
+      <!-- 12 slots will be generated by JavaScript -->
+    </div>
+  </div>
+</div>
+
+<!-- NARRATIVE / DIALOG SYSTEM PANEL -->
+<div id="dialog-ui" class="hidden" style="position:fixed; bottom:20px; left:50%; transform:translateX(-50%); width:min(600px, 94vw); z-index:100; pointer-events:auto;">
+  <div class="market-panel" style="padding: 16px 20px;">
+    <div class="market-header" style="margin-bottom: 8px; padding-bottom: 4px;">
+      <h2 id="dialog-speaker">Neznámý hlas</h2>
+      <span id="dialog-tag" class="market-tag">Dialog</span>
+    </div>
+    <div class="market-body" style="font-size:1.15rem; line-height:1.4; min-height: 50px;">
+      <p id="dialog-text">Byla to dlouhá noc...</p>
+      <button id="btn-dialog-next" class="market-btn" style="margin-top: 10px; padding: 6px 0; font-size: 0.85rem;">Pokračovat</button>
+    </div>
+  </div>
+</div>
 
 <div id="fishing-ui" class="hidden" aria-hidden="true">
   <div class="fishing-panel">
@@ -56,9 +228,9 @@
             <feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity="0.5"/>
           </filter>
         </defs>
-        <!-- tmavý tělocvičný kruh (červenohnědý = zbytek) -->
         <circle cx="100" cy="100" r="72" fill="none" stroke="#4a2528" stroke-width="22" filter="url(#wood-shadow)"/>
         <path id="fishing-green-arcs" fill="none" stroke="#29c46a" stroke-width="22" stroke-linecap="round"/>
+        <circle id="fishing-flash-ring" cx="100" cy="100" r="72" fill="none" stroke="#29c46a" stroke-width="22" opacity="0" pointer-events="none"/>
         <g id="fishing-needle" transform="translate(100 100)">
           <polygon points="0,-62 -7,-44 7,-44" fill="#f5f5f5"/>
         </g>
@@ -108,6 +280,7 @@
 
 <canvas id="game"></canvas>
 
-<script src="game.js"></script>
+<script src="fish-data.js?v=3"></script>
+<script src="game.js?v=3"></script>
 </body>
 </html>
