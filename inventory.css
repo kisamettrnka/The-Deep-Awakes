@@ -107,3 +107,109 @@
 .inventory-slot:hover .inventory-tooltip {
   display: block;
 }
+
+/* ---------- fish journal ---------- */
+#journal-ui {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(820px, 94vw);
+  max-height: 82vh;
+  z-index: 45;
+  pointer-events: none;
+}
+
+#journal-ui:not(.hidden) { pointer-events: auto; }
+
+.journal-panel {
+  display: flex;
+  flex-direction: column;
+  max-height: 82vh;
+  background: rgba(10, 6, 4, 0.95);
+  border: 2px solid #5a4228;
+  border-radius: 3px;
+  box-shadow: 0 16px 50px rgba(0, 0, 0, 0.9);
+  padding: 18px 20px 14px;
+  color: #d8cbb0;
+  font-family: "EB Garamond", Georgia, serif;
+}
+
+.journal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(120, 90, 45, 0.4);
+}
+
+.journal-header h3 {
+  font-family: "Cinzel Decorative", "Cinzel", serif;
+  font-weight: 900;
+  font-size: 1.5rem;
+  background: linear-gradient(180deg, #fff3d0 0%, #e8c070 48%, #a8742c 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+#journal-progress {
+  font-family: "Cinzel", serif;
+  font-size: 0.85rem;
+  letter-spacing: 0.1em;
+  color: #a89878;
+}
+
+.journal-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 10px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.journal-card {
+  padding: 8px 10px 10px;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid #3e2d1c;
+  border-radius: 3px;
+  text-align: center;
+}
+
+.journal-card canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 160 / 70;
+  margin-bottom: 4px;
+  background: radial-gradient(ellipse at 50% 40%, rgba(30, 70, 70, 0.45), rgba(0, 0, 0, 0) 70%);
+}
+
+.journal-card.unknown canvas { background: radial-gradient(ellipse at 50% 40%, rgba(40, 40, 40, 0.3), rgba(0, 0, 0, 0) 70%); }
+
+.journal-name {
+  font-family: "Cinzel", serif;
+  font-weight: 600;
+  font-size: 0.92rem;
+  color: #f0e2bc;
+}
+
+.journal-card.unknown .journal-name { color: #6e6458; letter-spacing: 0.2em; }
+.journal-card.rarity-uncommon .journal-name { color: #c6efb4; }
+.journal-card.rarity-rare .journal-name { color: #b4d6ff; }
+.journal-card.rarity-aberrant .journal-name { color: #ff9a9a; }
+
+.journal-meta {
+  margin-top: 2px;
+  font-size: 0.78rem;
+  color: #9a8c76;
+}
+
+.journal-stats {
+  margin-top: 3px;
+  font-size: 0.82rem;
+  color: #c8b896;
+}
+
+.journal-card.unknown .journal-stats { color: #5e554a; }

@@ -172,3 +172,12 @@
   background: linear-gradient(180deg, #4a4238 0%, #2a2622 100%);
   color: #d8cfc0;
 }
+
+/* destructive action sits apart from the harbour actions */
+.btn-new-game {
+  margin-top: 10px;
+  opacity: 0.7;
+  font-size: 0.85rem;
+}
+
+.btn-new-game:hover { opacity: 1; }

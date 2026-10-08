@@ -6,10 +6,10 @@
   <title>Temné moře</title>
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="stylesheet" href="style.css?v=5">
-  <link rel="stylesheet" href="fishing-minigame.css?v=13">
+  <link rel="stylesheet" href="fishing-minigame.css?v=14">
   <link rel="stylesheet" href="detektor-minigame.css?v=4">
-  <link rel="stylesheet" href="market.css?v=4">
-  <link rel="stylesheet" href="inventory.css?v=4">
+  <link rel="stylesheet" href="market.css?v=5">
+  <link rel="stylesheet" href="inventory.css?v=5">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600&family=Cinzel+Decorative:wght@700;900&family=EB+Garamond:ital,wght@0,500;0,600;1,500&display=swap" rel="stylesheet">
@@ -58,8 +58,20 @@
   </div>
 
   <div id="hud-bottom">
-    <div id="keys-hint"><kbd>A</kbd> <kbd>D</kbd> plavba · bubliny <kbd>SPACE</kbd> · detektor <kbd>F</kbd> · inventář <kbd>I</kbd> · kotviště <kbd>E</kbd> · světlo <kbd>L</kbd> · <span id="sound-state">zvuk</span> <kbd>M</kbd></div>
+    <div id="keys-hint"><kbd>A</kbd> <kbd>D</kbd> plavba · bubliny <kbd>SPACE</kbd> · detektor <kbd>F</kbd> · inventář <kbd>I</kbd> · kotviště <kbd>E</kbd> · deník <kbd>J</kbd> · světlo <kbd>L</kbd> · <span id="sound-state">zvuk</span> <kbd>M</kbd></div>
   </div>
+
+<!-- FISH JOURNAL -->
+<div id="journal-ui" class="hidden" aria-hidden="true">
+  <div class="journal-panel">
+    <div class="journal-header">
+      <h3>Rybářský deník</h3>
+      <span id="journal-progress">0 / 22 druhů</span>
+    </div>
+    <div id="journal-grid" class="journal-grid"></div>
+    <div class="market-close-hint">Zavřít klávesou <kbd>J</kbd> nebo <kbd>Esc</kbd></div>
+  </div>
+</div>
 
 <!-- DOCK MENU OVERLAY -->
 <div id="dock-menu-ui" class="hidden">
@@ -74,6 +86,7 @@
         <button id="btn-open-market" class="market-btn">Prodat úlovek (Trh)</button>
         <button id="btn-repair-ship" class="market-btn">Odpočinout a zklidnit mysl ($25)</button>
         <button id="btn-leave-dock" class="market-btn btn-secondary">Vyplout na moře</button>
+        <button id="btn-new-game" class="market-btn btn-secondary btn-new-game">Začít novou hru</button>
       </div>
     </div>
   </div>
@@ -144,7 +157,7 @@
       <div class="market-row" style="margin-bottom: 12px;">
         <div style="text-align: left;">
           <strong>Trup</strong> <span id="upgrade-hull-level">(Lvl 1)</span>
-          <div style="font-size:0.8rem; color:#888;">Odolnost proti šílenství/útokům.</div>
+          <div style="font-size:0.8rem; color:#888;">Odolnost proti šílenství a větší podpalubí (+4 místa).</div>
         </div>
         <button id="btn-upgrade-hull" class="market-btn" style="width:110px;">$200</button>
       </div>
@@ -256,6 +269,7 @@
       <h2 id="fishing-title">Něco zabralo!</h2>
       <span class="fishing-rule" aria-hidden="true"></span>
       <p class="fishing-stock">Obtížnost: <span id="fishing-difficulty" class="fishing-difficulty"></span></p>
+      <p class="fishing-stock">Hejno: <span id="fishing-spot-stock" class="fishing-difficulty"></span></p>
       <span id="fishing-zone-tag" class="fishing-tag">POBŘEŽÍ</span>
     </div>
   </div>
@@ -317,7 +331,7 @@
 
 <canvas id="game"></canvas>
 
-<script src="fish-data.js?v=6"></script>
-<script src="game.js?v=17"></script>
+<script src="fish-data.js?v=7"></script>
+<script src="game.js?v=20"></script>
 </body>
 </html>

@@ -271,6 +271,11 @@ let headlightOn = true;
 let headlight = { on: true, pct: 1, flicker: 1, dead: false, strength: 1, halfW: 140, r: 110, g: 220, b: 170 };
 let batteryDeadWarned = false;
 let gameWon = false;
+
+// The boat swings round to face where it sails (eased −1…1)
+let boatFacing = 1;
+let boatFacingTarget = 1;
+let fishJournal = {};          // species id → { count, best }
 let seabedFeatures = [];
 let sparkles = [];
 
@@ -422,6 +427,7 @@ function getBubbleNearPlayer() {
   let bestD = getBubbleActivateRadius();
   for (let i = 0; i < bubbleSpots.length; i++) {
     const spot = bubbleSpots[i];
+    if (spot.stock !== undefined && spot.stock < 1) continue;
     const d = Math.abs(spot.wx - player.x);
     if (d < getBubbleActivateRadius() && d < bestD) {
       bestD = d;
@@ -1362,6 +1368,16 @@ function updateFishingInfoPanel() {
     diffEl.setAttribute("aria-label", `Obtížnost ${d} z 5`);
   }
 
+  const stockEl = document.getElementById("fishing-spot-stock");
+  if (stockEl && activeFishingSpot) {
+    stockEl.innerHTML = "";
+    for (let i = 1; i <= SPOT_MAX_STOCK; i++) {
+      const pip = document.createElement("span");
+      pip.className = "stock-pip" + (i <= activeFishingSpot.stock ? " on" : "");
+      stockEl.appendChild(pip);
+    }
+  }
+
   const zoneEl = document.getElementById("fishing-zone-tag");
   if (zoneEl) {
     let zone = "POBŘEŽÍ", key = "coast";
@@ -1376,7 +1392,13 @@ function updateFishingInfoPanel() {
 
 function tryStartFishing() {
   if (fishingMode || fishingLocked || detektorMode || detektorLocked) return;
-  if (!getBubbleNearPlayer()) return;
+  const spot = getBubbleNearPlayer();
+  if (!spot) return;
+  if (inventory.length >= getCargoCapacity()) {
+    triggerDialogue("Podpalubí", "Podpalubí je plné. Prodej úlovek na trhu v přístavu, nebo si na ropné věži vylepši trup.");
+    return;
+  }
+  activeFishingSpot = spot;
 
   fishingMode = true;
   fishingLocked = false;
@@ -1451,7 +1473,7 @@ function closeFishingPanel() {
 function endFishingSuccess() {
   fishingLocked = true;
   
-  if (inventory.length >= 12) {
+  if (inventory.length >= getCargoCapacity()) {
     if (fishingResultEl) {
       fishingResultEl.textContent = "Podpalubí je plné! Nemůžeš naložit další ryby.";
       fishingResultEl.className = "fishing-result bad";
@@ -1470,6 +1492,8 @@ function endFishingSuccess() {
 
   // Add to inventory
   inventory.push(caught);
+  recordCatchInJournal(caught);
+  if (activeFishingSpot) activeFishingSpot.stock = Math.max(0, activeFishingSpot.stock - 1);
   caughtFish = inventory.length;
 
   if (fishingResultEl) {
@@ -1906,6 +1930,17 @@ window.addEventListener("keydown", (e) => {
 
   const inMinigame = fishingMode || detektorMode || rechargeMinigameActive;
 
+  if (key === "j" && !e.repeat) {
+    toggleJournal();
+    return;
+  }
+
+  if (key === "escape") {
+    if (journalOpen) toggleJournal(false);
+    if (inventoryOpen) toggleInventory();
+    return;
+  }
+
   if (key === "i") {
     e.preventDefault();
     toggleInventory();
@@ -1980,8 +2015,12 @@ function update() {
   // player.speed is tuned in pixels per 60 Hz frame; scale by real time so
   // high-refresh monitors don't sail faster
   const f60 = frameDt * 60;
-  if (keys["a"] || keys["arrowleft"]) player.x -= player.speed * f60;
-  if (keys["d"] || keys["arrowright"]) player.x += player.speed * f60;
+  const goLeft = keys["a"] || keys["arrowleft"];
+  const goRight = keys["d"] || keys["arrowright"];
+  if (goLeft) player.x -= player.speed * f60;
+  if (goRight) player.x += player.speed * f60;
+  if (goLeft && !goRight) boatFacingTarget = -1;
+  else if (goRight && !goLeft) boatFacingTarget = 1;
 
   player.x = Math.max(-worldWidth / 2 + 100, Math.min(worldWidth / 2 - 100, player.x));
 
@@ -2042,7 +2081,8 @@ function update() {
 
   // Smoke particle update
   const bob = boatBob();
-  const exhaustWx = player.x - 22;
+  const sternDir = boatFacing < 0 ? 1 : -1;
+  const exhaustWx = player.x + 22 * sternDir;
   const exhaustWy = getSurfaceY() - 8 + bob - 68;
   const isMoving = keys["a"] || keys["arrowleft"] || keys["d"] || keys["arrowright"];
 
@@ -2050,7 +2090,7 @@ function update() {
     smokeParticles.push({
       wx: exhaustWx,
       wy: exhaustWy,
-      vx: -0.4 - Math.random() * 0.5,
+      vx: sternDir * (0.4 + Math.random() * 0.5),
       vy: -0.5 - Math.random() * 0.4,
       r: 2 + Math.random() * 2,
       alpha: 0.5
@@ -2059,7 +2099,7 @@ function update() {
     smokeParticles.push({
       wx: exhaustWx,
       wy: exhaustWy,
-      vx: -0.1 - Math.random() * 0.2,
+      vx: sternDir * (0.1 + Math.random() * 0.2),
       vy: -0.3 - Math.random() * 0.2,
       r: 1.5 + Math.random() * 1.5,
       alpha: 0.35
@@ -3417,9 +3457,12 @@ function drawBubbles(surfaceY) {
     const sx = b.wx - camera.x;
     if (sx < -40 || sx > canvas.width + 40) return;
     const by = surfaceY - 6 + Math.sin(t + b.phase) * 3;
+    const stock = b.stock === undefined ? SPOT_MAX_STOCK : b.stock;
+    if (stock <= 0) return;
+    const count = stock >= 3 ? 5 : stock + 1;
     ctx.save();
     ctx.lineWidth = 1.2;
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < count; i++) {
       const ox = (i - 2) * 6 + Math.sin(b.phase * 1.3 + i) * 4;
       const oy = -i * 3 - (i % 2);
       const rr = 2.2 + i * 1.4;
@@ -3618,7 +3661,7 @@ function drawUnderwaterDarkness(surfaceY, boatX, keelY) {
     cutLight(g, boatX, canvas.height - 45, hl.halfW * 1.1, 0.25 * hl.strength);
   }
   // The deck lantern spills a little warm light onto the water around the boat
-  cutLight(g, boatX + 60, surfaceY + 6, 85, 0.3);
+  cutLight(g, boatX + 60 * boatFacing, surfaceY + 6, 85, 0.3);
   frameGlows.forEach((gl) => cutLight(g, gl.x, gl.y, gl.r, gl.strength));
 
   g.globalCompositeOperation = "source-over";
@@ -3653,11 +3696,11 @@ function drawLightCone(screenBoatX, keelY, surfaceY) {
       if (blink > 0) {
         ctx.save();
         ctx.globalCompositeOperation = "screen";
-        const eg = ctx.createRadialGradient(screenBoatX + 78, keelY - 11, 1, screenBoatX + 78, keelY - 11, 18);
+        const eg = ctx.createRadialGradient(screenBoatX + 78 * boatFacing, keelY - 11, 1, screenBoatX + 78 * boatFacing, keelY - 11, 18);
         eg.addColorStop(0, `rgba(255,60,60,${blink})`);
         eg.addColorStop(1, "rgba(0,0,0,0)");
         ctx.fillStyle = eg;
-        ctx.fillRect(screenBoatX + 60, keelY - 29, 36, 36);
+        ctx.fillRect(screenBoatX + 78 * boatFacing - 18, keelY - 29, 36, 36);
         ctx.restore();
       }
     }
@@ -3722,11 +3765,11 @@ function drawLightCone(screenBoatX, keelY, surfaceY) {
   lamp.addColorStop(1, "rgba(0,0,0,0)");
   ctx.fillStyle = lamp;
   ctx.fillRect(screenBoatX - 46, keelY - 40, 92, 92);
-  const head = ctx.createRadialGradient(screenBoatX + 78, keelY - 11, 1, screenBoatX + 78, keelY - 11, 22);
+  const head = ctx.createRadialGradient(screenBoatX + 78 * boatFacing, keelY - 11, 1, screenBoatX + 78 * boatFacing, keelY - 11, 22);
   head.addColorStop(0, `rgba(${Math.min(255, r + 60)},${Math.min(255, g + 30)},200,${0.55 * s})`);
   head.addColorStop(1, "rgba(255,255,200,0)");
   ctx.fillStyle = head;
-  ctx.fillRect(screenBoatX + 56, keelY - 33, 44, 44);
+  ctx.fillRect(screenBoatX + 78 * boatFacing - 22, keelY - 33, 44, 44);
   ctx.restore();
 }
 
@@ -4925,6 +4968,8 @@ function drawBoatSide(screenX, surfaceY, bob) {
   const y = surfaceY - 8 + bob;
   ctx.save();
   ctx.translate(screenX, y);
+  // Face the direction of travel; easing through zero reads as the boat swinging round
+  ctx.scale(Math.abs(boatFacing) < 0.06 ? (boatFacing < 0 ? -0.06 : 0.06) : boatFacing, 1);
 
   // 1. Hull Base (layered red-brown)
   ctx.fillStyle = "#7a2020";
@@ -5198,6 +5243,7 @@ function openDockMenu() {
 
   // Decrease danger level
   addDanger(-4);
+  saveGame();
 }
 
 function openOilRigMenu() {
@@ -5291,6 +5337,9 @@ function initMenuButtons() {
   if (btnUpgradeRodLine) btnUpgradeRodLine.addEventListener("click", () => buyRodUpgrade("line"));
   if (btnUpgradeRodBait) btnUpgradeRodBait.addEventListener("click", () => buyRodUpgrade("bait"));
 
+  const btnNewGame = document.getElementById("btn-new-game");
+  if (btnNewGame) btnNewGame.addEventListener("click", () => startNewGame());
+
   const btnBuyKit = document.getElementById("btn-buy-recharge-kit");
   if (btnBuyKit) btnBuyKit.addEventListener("click", () => buyRechargeKit());
 
@@ -5346,6 +5395,7 @@ function sellAllFish() {
   
   gold += totalVal;
   playCoins();
+  saveGame();
   if (goldUI) goldUI.innerText = gold;
   
   const count = inventory.length;
@@ -5422,7 +5472,8 @@ function buyShipUpgrade(type) {
   if (type === "engine") {
     player.speed = 2.8 + (upgrades.engine - 1) * 0.9;
   }
-  
+  if (type === "hull") updateInventoryUI();
+
   updateOilRigUI();
   if (oilrigResultEl) {
     oilrigResultEl.textContent = `Vylepšení zakoupeno!`;
@@ -5515,10 +5566,10 @@ function updateInventoryUI() {
   inventoryGridEl.innerHTML = "";
   
   if (inventoryCapacityEl) {
-    inventoryCapacityEl.textContent = `Kapacita: ${inventory.length} / 12`;
+    inventoryCapacityEl.textContent = `Kapacita: ${inventory.length} / ${getCargoCapacity()}`;
   }
-  
-  for (let i = 0; i < 12; i++) {
+
+  for (let i = 0; i < getCargoCapacity(); i++) {
     const slotEl = document.createElement("div");
     slotEl.className = "inventory-slot";
     
@@ -5724,7 +5775,9 @@ function restartGame() {
   }
   
   seedWorld();
-  
+  initSpotState();
+
+  saveGame();
   triggerDialogue("Nový začátek", "Procitáš v přístavu, s třeštící hlavou a prázdným podpalubím. Byl to jen sen? Nebo tě moře vrátilo zpět?");
 }
 
@@ -6673,6 +6726,336 @@ function drawWorldPrompts(surfaceY) {
   ctx.restore();
 }
 
+// =====================================================================
+// PROGRESSION — cargo space, fishing-spot stocks, discovery, journal,
+// route map and saving.
+// =====================================================================
+
+const SPOT_MAX_STOCK = 3;
+const SPOT_REGEN_SECONDS = 90;        // an emptied spot gets a fish back every ~1.5 min
+const DISCOVER_RADIUS = 700;          // spots appear on the route map once you sail this close
+const SAVE_KEY = "deep-awakes-save-v1";
+const AUTOSAVE_SECONDS = 15;
+const RARITY_LABEL = { common: "Běžná", uncommon: "Neobvyklá", rare: "Vzácná", aberrant: "Abnormální" };
+
+let activeFishingSpot = null;
+let journalOpen = false;
+let saveTimer = 0;
+
+// Hull upgrades also enlarge the hold: 12 / 16 / 20 / 24 slots
+function getCargoCapacity() {
+  return 8 + upgrades.hull * 4;
+}
+
+function initSpotState() {
+  bubbleSpots.forEach((b) => {
+    b.stock = SPOT_MAX_STOCK;
+    b.regen = 0;
+    b.discovered = false;
+  });
+  detektorSpots.forEach((s) => { s.discovered = false; });
+}
+
+function updateSpots(dt) {
+  bubbleSpots.forEach((b) => {
+    if (b.stock < SPOT_MAX_STOCK) {
+      b.regen += dt;
+      if (b.regen >= SPOT_REGEN_SECONDS) {
+        b.regen = 0;
+        b.stock++;
+      }
+    }
+    if (!b.discovered && Math.abs(b.wx - player.x) < DISCOVER_RADIUS) b.discovered = true;
+  });
+  detektorSpots.forEach((s) => {
+    if (!s.discovered && Math.abs(s.wx - player.x) < DISCOVER_RADIUS * 0.6) s.discovered = true;
+  });
+}
+
+function recordCatchInJournal(fish) {
+  const entry = fishJournal[fish.id] || (fishJournal[fish.id] = { count: 0, best: 0 });
+  entry.count++;
+  entry.best = Math.max(entry.best, fish.weight || 0);
+}
+
+// --- Fish journal (J) ---
+
+function fishZoneLabel(f) {
+  return f.reefOnly ? "Krvavý útes" : f.oilOnly ? "Ropná věž" : "Otevřené moře";
+}
+
+function fishTimeLabel(f) {
+  return f.timeOfDay === "night" ? "v noci" : f.timeOfDay === "day" ? "ve dne" : "kdykoli";
+}
+
+function drawJournalFish(cv, species, known) {
+  const g = cv.getContext("2d");
+  const W = 160, H = 70;
+  g.setTransform(cv.width / W, 0, 0, cv.height / H, 0, 0);
+  g.clearRect(0, 0, W, H);
+  g.save();
+  g.translate(W / 2, H / 2);
+  g.scale(0.55, 0.55);
+  const rgb = known ? fishHexToRgb(species.color || "#8aa6b5") : { r: 40, g: 46, b: 50 };
+  (FISH_SHAPES[species.shape] || FISH_SHAPES.slim)(g, rgb, 0.8, 0);
+  g.restore();
+  if (!known) {
+    // Unknown species: only a dark silhouette as a hint
+    g.globalCompositeOperation = "source-atop";
+    g.fillStyle = "rgba(62,70,76,0.95)";
+    g.fillRect(0, 0, W, H);
+    g.globalCompositeOperation = "source-over";
+  }
+}
+
+function renderJournal() {
+  const grid = document.getElementById("journal-grid");
+  if (!grid) return;
+  grid.innerHTML = "";
+  let found = 0;
+  FISH_SPECIES.forEach((f) => {
+    const e = fishJournal[f.id];
+    if (e) found++;
+    const card = document.createElement("div");
+    card.className = "journal-card " + (e ? `rarity-${f.rarity}` : "unknown");
+    if (e) card.title = f.desc || "";
+
+    const cv = document.createElement("canvas");
+    cv.width = 320;
+    cv.height = 140;
+    drawJournalFish(cv, f, !!e);
+    card.appendChild(cv);
+
+    const name = document.createElement("div");
+    name.className = "journal-name";
+    name.textContent = e ? f.name : "???";
+    card.appendChild(name);
+
+    const meta = document.createElement("div");
+    meta.className = "journal-meta";
+    meta.textContent = (e ? RARITY_LABEL[f.rarity] + " · " : "") + fishZoneLabel(f) + " · " + fishTimeLabel(f);
+    card.appendChild(meta);
+
+    const stats = document.createElement("div");
+    stats.className = "journal-stats";
+    stats.textContent = e ? `Uloveno ${e.count}× · rekord ${formatKg(e.best)}` : "Zatím neuloveno";
+    card.appendChild(stats);
+
+    grid.appendChild(card);
+  });
+  const prog = document.getElementById("journal-progress");
+  if (prog) prog.textContent = `${found} / ${FISH_SPECIES.length} druhů`;
+}
+
+function toggleJournal(force) {
+  const ui = document.getElementById("journal-ui");
+  if (!ui) return;
+  journalOpen = typeof force === "boolean" ? force : !journalOpen;
+  if (journalOpen) renderJournal();
+  ui.classList.toggle("hidden", !journalOpen);
+  ui.setAttribute("aria-hidden", journalOpen ? "false" : "true");
+}
+
+// --- Route map under the clock ---
+
+function drawRouteMap() {
+  const W = Math.min(520, canvas.width * 0.42);
+  const H = 18;
+  const x0 = (canvas.width - W) / 2;
+  const y0 = 104;
+  const half = worldWidth / 2;
+  const toX = (wx) => x0 + ((wx + half) / worldWidth) * W;
+  const mid = y0 + H / 2;
+  const t = performance.now() * 0.001;
+
+  ctx.save();
+  ctx.fillStyle = "rgba(6,8,10,0.55)";
+  ctx.strokeStyle = "rgba(160,130,90,0.35)";
+  ctx.lineWidth = 1;
+  gaugeRoundRect(ctx, x0 - 10, y0 - 4, W + 20, H + 8, 5);
+  ctx.fill();
+  ctx.stroke();
+
+  // Open water, darker toward the deep ends of the world
+  ctx.strokeStyle = "rgba(120,170,170,0.35)";
+  ctx.beginPath();
+  ctx.moveTo(x0, mid);
+  ctx.lineTo(x0 + W, mid);
+  ctx.stroke();
+  ctx.fillStyle = "rgba(0,0,0,0.35)";
+  ctx.fillRect(x0, y0, toX(-worldWidth * 0.3) - x0, H);
+  ctx.fillRect(toX(worldWidth * 0.3), y0, x0 + W - toX(worldWidth * 0.3), H);
+
+  // Reef and oil rig zones
+  ctx.fillStyle = "rgba(210,50,90,0.35)";
+  ctx.fillRect(toX(REEF_WX_START), y0 + 3, toX(REEF_WX_END) - toX(REEF_WX_START), H - 6);
+  ctx.fillStyle = "rgba(230,160,50,0.22)";
+  ctx.fillRect(toX(OILRIG_WX_START), y0 + 3, toX(OILRIG_WX_END) - toX(OILRIG_WX_START), H - 6);
+
+  // Discovered fishing spots: bright while they still hold fish
+  bubbleSpots.forEach((b) => {
+    if (!b.discovered) return;
+    ctx.fillStyle = b.stock > 0 ? "rgba(200,232,255,0.8)" : "rgba(200,232,255,0.18)";
+    ctx.beginPath();
+    ctx.arc(toX(b.wx), mid, 1.6, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  // Discovered relic sites: gold diamonds, dim once raised
+  detektorSpots.forEach((s) => {
+    if (!s.discovered) return;
+    const x = toX(s.wx);
+    ctx.fillStyle = s.taken ? "rgba(140,120,80,0.35)" : `rgba(255,205,90,${0.75 + 0.25 * Math.sin(t * 3)})`;
+    ctx.beginPath();
+    ctx.moveTo(x, mid - 5);
+    ctx.lineTo(x + 3.5, mid);
+    ctx.lineTo(x, mid + 5);
+    ctx.lineTo(x - 3.5, mid);
+    ctx.closePath();
+    ctx.fill();
+  });
+
+  // Landmarks: harbour, lighthouse (blinking), oil rig
+  const hx = toX(2720);
+  ctx.fillStyle = "#e8c070";
+  ctx.fillRect(hx - 3, mid - 3, 6, 6);
+  const lx = toX(LIGHTHOUSE_WX);
+  ctx.fillStyle = "#f2efe6";
+  ctx.fillRect(lx - 1.5, mid - 7, 3, 10);
+  ctx.fillStyle = `rgba(255,240,180,${0.5 + 0.5 * Math.max(0, Math.sin(t * 2.4))})`;
+  ctx.beginPath();
+  ctx.arc(lx, mid - 7, 2.5, 0, Math.PI * 2);
+  ctx.fill();
+  const ox = toX(OILRIG_WX);
+  ctx.strokeStyle = "#e0a040";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(ox - 4, mid + 5);
+  ctx.lineTo(ox, mid - 6);
+  ctx.lineTo(ox + 4, mid + 5);
+  ctx.moveTo(ox - 5, mid - 1);
+  ctx.lineTo(ox + 5, mid - 1);
+  ctx.stroke();
+
+  // The boat, pointing the way it faces
+  const px = toX(player.x);
+  const dir = boatFacing < 0 ? -1 : 1;
+  ctx.fillStyle = "#ff7a5a";
+  ctx.shadowColor = "rgba(255,120,90,0.8)";
+  ctx.shadowBlur = 6;
+  ctx.beginPath();
+  ctx.moveTo(px + dir * 6, mid);
+  ctx.lineTo(px - dir * 4, mid - 4.5);
+  ctx.lineTo(px - dir * 4, mid + 4.5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+// --- Saving: autosave every few seconds, on docking, selling and leaving the page ---
+
+function saveGame() {
+  if (gameOver) return;
+  const data = {
+    v: 1,
+    gold,
+    inventory: inventory.map((f) => ({ id: f.id, weight: f.weight })),
+    upgrades: { ...upgrades },
+    rodUpgrades: { ...rodUpgrades },
+    battery,
+    headlightOn,
+    relicsFound,
+    gameWon,
+    detektor: detektorSpots.map((s) => ({ wx: s.wx, taken: s.taken, discovered: s.discovered })),
+    spots: bubbleSpots.map((b) => ({ stock: b.stock, discovered: b.discovered })),
+    gameTime,
+    dayNum,
+    danger,
+    playerX: player.x,
+    kitOwned: batteryRechargeKitOwned,
+    kitLeft: batteryRechargesLeft,
+    journal: fishJournal,
+    firstFishCaught,
+    dangerThresh3
+  };
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+  } catch (e) {
+    // storage full or blocked — the game keeps running without saving
+  }
+}
+
+function loadGame() {
+  let data = null;
+  try {
+    data = JSON.parse(localStorage.getItem(SAVE_KEY) || "null");
+  } catch (e) {
+    data = null;
+  }
+  if (!data || data.v !== 1) return false;
+
+  gold = Math.max(0, data.gold | 0);
+  inventory = (data.inventory || [])
+    .map((it) => {
+      const sp = FISH_SPECIES.find((f) => f.id === it.id);
+      return sp ? makeCaughtFish(sp, it.weight) : null;
+    })
+    .filter(Boolean);
+  caughtFish = inventory.length;
+  Object.assign(upgrades, data.upgrades || {});
+  Object.assign(rodUpgrades, data.rodUpgrades || {});
+  player.speed = 2.8 + (upgrades.engine - 1) * 0.9;
+  battery = Math.max(0, Math.min(BATTERY_MAX, Number(data.battery) || BATTERY_MAX));
+  headlightOn = data.headlightOn !== false;
+  relicsFound = data.relicsFound | 0;
+  gameWon = !!data.gameWon;
+  if (Array.isArray(data.detektor) && data.detektor.length === detektorSpots.length) {
+    data.detektor.forEach((d, i) => {
+      detektorSpots[i].wx = d.wx;
+      detektorSpots[i].taken = !!d.taken;
+      detektorSpots[i].discovered = !!d.discovered;
+    });
+  }
+  if (Array.isArray(data.spots)) {
+    data.spots.forEach((st, i) => {
+      if (!bubbleSpots[i]) return;
+      bubbleSpots[i].stock = Math.max(0, Math.min(SPOT_MAX_STOCK, st.stock | 0));
+      bubbleSpots[i].discovered = !!st.discovered;
+    });
+  }
+  gameTime = Number(data.gameTime) || 7.75;
+  dayNum = data.dayNum | 0 || 1;
+  // A reload never drops you straight back into the jaws of madness
+  danger = Math.min(8, Math.max(0, Number(data.danger) || 0));
+  player.x = Number(data.playerX) || 2200;
+  camera.x = player.x - canvas.width / 2;
+  batteryRechargeKitOwned = !!data.kitOwned;
+  batteryRechargesLeft = data.kitLeft | 0;
+  fishJournal = data.journal || {};
+  firstFishCaught = !!data.firstFishCaught;
+  dangerThresh3 = !!data.dangerThresh3;
+
+  if (goldUI) goldUI.innerText = gold;
+  if (fishUI) fishUI.innerText = caughtFish;
+  if (dangerUI) dangerUI.innerText = Math.round(danger);
+  syncRelicsHud();
+  updateInventoryUI();
+  return true;
+}
+
+function startNewGame() {
+  if (!window.confirm("Opravdu začít novou hru? Uložený postup se smaže.")) return;
+  try {
+    localStorage.removeItem(SAVE_KEY);
+  } catch (e) {
+    // nothing to remove
+  }
+  window.removeEventListener("beforeunload", saveGame);
+  window.location.reload();
+}
+
+window.addEventListener("beforeunload", saveGame);
+
 function gameLoop() {
   const surfaceY = getSurfaceY();
 
@@ -6685,6 +7068,13 @@ function gameLoop() {
   updateBoatRods(frameDt);
   updateWildlife(frameDt);
   updateBioWake(frameDt);
+  updateSpots(frameDt);
+  boatFacing += (boatFacingTarget - boatFacing) * Math.min(1, frameDt * 4);
+  saveTimer += frameDt;
+  if (saveTimer >= AUTOSAVE_SECONDS) {
+    saveTimer = 0;
+    saveGame();
+  }
   updateLightning(frameDt);
   updateSound();
   updateScreenShake();
@@ -6869,6 +7259,8 @@ function gameLoop() {
 
   ctx.restore();
 
+  drawRouteMap();
+
   if (dangerUI) dangerUI.innerText = Math.round(danger);
 
   updateFishingHudVisuals();
@@ -6881,5 +7273,9 @@ function gameLoop() {
 syncRelicsHud();
 initFishingRingSvg();
 initMenuButtons();
+initSpotState(); // after the whole script has run: it uses constants declared further down
 updateInventoryUI();
+if (loadGame()) {
+  triggerDialogue("Lodní deník", `Pokračuješ v plavbě — den ${dayNum}. Postup se ukládá sám.`);
+}
 gameLoop();

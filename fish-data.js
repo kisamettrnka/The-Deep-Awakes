@@ -422,9 +422,9 @@ function computeFishPrice(species, weight) {
   return Math.max(1, Math.round(weight * FISH_PRICE_PER_KG * (species.priceMult || 1)));
 }
 
-// One caught fish = the species data plus its own weight and price
-function makeCaughtFish(species) {
-  const weight = rollFishWeight(species);
+// One caught fish = the species data plus its own weight and price (weight given when loading a save)
+function makeCaughtFish(species, savedWeight) {
+  const weight = savedWeight != null ? savedWeight : rollFishWeight(species);
   const [lo, hi] = species.weight || [1, 2];
   return {
     ...species,

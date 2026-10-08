@@ -377,3 +377,17 @@
 
 #recharge-ui .fishing-result.ok { color: #e8d070; }
 #recharge-ui .fishing-result.bad { color: #c97a7a; }
+
+/* fishing-spot stock (how many fish are left here) */
+.stock-pip {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid rgba(120, 200, 220, 0.45);
+}
+
+.stock-pip.on {
+  background: #6fd0e6;
+  border-color: #6fd0e6;
+  box-shadow: 0 0 6px rgba(110, 210, 230, 0.6);
+}
