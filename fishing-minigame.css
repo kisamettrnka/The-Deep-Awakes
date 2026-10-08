@@ -4,7 +4,7 @@
   left: 50%;
   bottom: 10%;
   transform: translateX(-50%);
-  width: min(560px, 94vw);
+  width: min(640px, 94vw);
   z-index: 40;
   padding: 0;
   pointer-events: none;
@@ -19,7 +19,7 @@
 
 .fishing-panel {
   display: grid;
-  grid-template-columns: 72px 1fr minmax(160px, 1.15fr);
+  grid-template-columns: 72px 1fr minmax(190px, 1.15fr);
   gap: 14px 18px;
   align-items: center;
   padding: 18px 20px 20px;
@@ -37,77 +37,12 @@
   justify-self: center;
 }
 
-.v-gauge {
-  position: relative;
-  width: 36px;
-  height: 168px;
-}
-
-.v-gauge-water {
-  position: absolute;
-  top: -6px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 28px;
-  height: 16px;
-  background: linear-gradient(180deg, #4a8ec4, #2a5a8a);
-  border-radius: 2px;
-  opacity: 0.9;
-}
-
-.v-gauge-track {
-  position: absolute;
-  top: 8px;
-  bottom: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 4px;
-  background: rgba(255, 255, 255, 0.15);
-  border-radius: 2px;
-}
-
-.v-gauge-track::before {
-  content: "";
-  position: absolute;
-  left: -3px;
-  top: 0;
-  bottom: 0;
-  width: 10px;
-  background: repeating-linear-gradient(
-    180deg,
-    transparent 0,
-    transparent 10px,
-    rgba(255, 255, 255, 0.08) 10px,
-    rgba(255, 255, 255, 0.08) 12px
-  );
-}
-
-.catch-fish-icon {
-  position: absolute;
-  left: 50%;
-  bottom: 8%;
-  width: 22px;
-  height: 14px;
-  margin-left: -11px;
-  background: #f0f0f0;
-  border-radius: 50% 60% 45% 55%;
-  transition: bottom 0.18s ease-out;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
-}
-
-.catch-fish-icon::after {
-  content: "";
-  position: absolute;
-  left: -8px;
-  top: 2px;
-  border: 5px solid transparent;
-  border-right-color: #f0f0f0;
-}
-
 .fishing-ring-col {
   display: flex;
+  flex-direction: column;
   justify-content: center;
   align-items: center;
+  gap: 8px;
 }
 
 #fishing-ring-svg {
@@ -121,75 +56,6 @@
   padding-left: 4px;
 }
 
-#fishing-title {
-  font-family: "Cinzel", serif;
-  font-size: 1.15rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  color: #f2efe8;
-  margin-bottom: 8px;
-}
-
-.fishing-stock {
-  font-size: 0.98rem;
-  color: #9a9186;
-  margin-bottom: 8px;
-}
-
-.stock-high {
-  color: #3dd68c;
-  font-weight: 600;
-}
-
-.fishing-tag {
-  display: inline-block;
-  padding: 3px 10px;
-  margin-bottom: 12px;
-  font-size: 0.72rem;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  background: #4a3a6a;
-  color: #eee;
-  border: 1px solid #6a5a8a;
-}
-
-.fishing-instruct {
-  font-size: 0.92rem;
-  line-height: 1.45;
-  color: #b8b0a4;
-}
-
-.fishing-instruct kbd {
-  display: inline-block;
-  padding: 2px 8px;
-  margin: 0 2px;
-  border-radius: 4px;
-  border: 1px solid rgba(160, 140, 120, 0.45);
-  background: rgba(0, 0, 0, 0.45);
-  font-size: 0.8rem;
-  font-family: ui-monospace, monospace;
-  color: #eee;
-}
-
-.fishing-red-hint {
-  margin-top: 10px;
-  font-size: 0.9rem;
-  color: #c97a7a;
-}
-
-.fishing-result {
-  margin-top: 12px;
-  font-size: 1rem;
-  font-weight: 600;
-}
-
-.fishing-result.ok {
-  color: #3dd68c;
-}
-
-.fishing-result.bad {
-  color: #c97a7a;
-}
 
 @media (max-width: 540px) {
   .fishing-panel {
@@ -209,8 +75,9 @@
     order: 3;
   }
 
-  .v-gauge {
-    height: 120px;
+  #catch-gauge-canvas {
+    width: 40px;
+    height: 128px;
   }
 }
 
@@ -272,20 +139,164 @@
   box-shadow: 0 0 6px rgba(216, 68, 60, 0.8);
 }
 
-.fishing-traits {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin: -4px 0 10px;
+
+#catch-gauge-canvas {
+  display: block;
+  background: transparent;
+  width: 56px;
+  height: 180px;
+  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.6));
 }
 
-.fishing-traits:empty { display: none; }
+/* ---------- title, ornament, zone badge, difficulty ---------- */
+#fishing-title {
+  font-family: "Cinzel Decorative", "Cinzel", serif;
+  font-weight: 900;
+  font-size: clamp(1.7rem, 4.6vw, 2.2rem);
+  line-height: 1.08;
+  letter-spacing: 0.02em;
+  margin-bottom: 6px;
+  background: linear-gradient(180deg, #fff3d0 0%, #e8c070 48%, #a8742c 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.75)) drop-shadow(0 0 14px rgba(232, 176, 80, 0.35));
+}
 
-.fishing-trait {
-  padding: 1px 7px;
-  font-size: 0.72rem;
-  letter-spacing: 0.04em;
-  color: #e8c9a0;
-  border: 1px solid rgba(200, 150, 100, 0.45);
-  background: rgba(80, 50, 30, 0.35);
+#fishing-title.aberrant {
+  background-image: linear-gradient(180deg, #ffd6d0 0%, #e0504a 50%, #7a1020 100%);
+  filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.8)) drop-shadow(0 0 16px rgba(220, 50, 60, 0.55));
+  animation: fishing-title-flicker 3.2s steps(1, end) infinite;
+}
+
+#fishing-ui:not(.hidden) #fishing-title {
+  animation: fishing-title-in 0.6s cubic-bezier(0.2, 0.9, 0.3, 1.25) both;
+}
+
+#fishing-ui:not(.hidden) #fishing-title.aberrant {
+  animation: fishing-title-in 0.6s cubic-bezier(0.2, 0.9, 0.3, 1.25) both, fishing-title-flicker 3.2s steps(1, end) 0.6s infinite;
+}
+
+@keyframes fishing-title-in {
+  0% { opacity: 0; transform: translateY(-8px) scale(0.86); letter-spacing: 0.14em; }
+  100% { opacity: 1; transform: none; letter-spacing: 0.02em; }
+}
+
+@keyframes fishing-title-flicker {
+  0%, 92%, 96% { opacity: 1; }
+  93%, 98% { opacity: 0.55; }
+}
+
+.fishing-rule {
+  display: block;
+  position: relative;
+  height: 9px;
+  margin: 2px 0 12px;
+  background: linear-gradient(90deg, rgba(200, 150, 80, 0.85), rgba(200, 150, 80, 0) 92%) center / 100% 1px no-repeat;
+}
+
+.fishing-rule::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 1px;
+  width: 7px;
+  height: 7px;
+  background: #d8a860;
+  transform: rotate(45deg);
+  box-shadow: 0 0 8px rgba(232, 176, 80, 0.6);
+}
+
+.fishing-stock {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  font-family: "Cinzel", serif;
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #a89878;
+}
+
+.fishing-difficulty { margin-left: 4px; }
+
+.diff-pip {
+  width: 10px;
+  height: 10px;
+}
+
+.fishing-tag {
+  --zone: #a8e6dc;
+  --zone-line: rgba(90, 200, 190, 0.6);
+  --zone-glow: rgba(60, 180, 170, 0.28);
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 14px;
+  margin-bottom: 12px;
+  font-family: "Cinzel", serif;
+  font-weight: 600;
+  font-size: 0.8rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--zone);
+  background: linear-gradient(180deg, rgba(48, 42, 36, 0.7), rgba(14, 12, 10, 0.85));
+  border: 1px solid var(--zone-line);
+  border-radius: 2px;
+  box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.55), inset 0 0 14px var(--zone-glow), 0 0 12px var(--zone-glow);
+  text-shadow: 0 0 8px var(--zone-glow);
+}
+
+.fishing-tag::before,
+.fishing-tag::after {
+  content: "";
+  width: 5px;
+  height: 5px;
+  background: var(--zone);
+  transform: rotate(45deg);
+  opacity: 0.85;
+}
+
+.fishing-tag[data-zone="deep"]  { --zone: #bcbaff; --zone-line: rgba(130, 120, 230, 0.65); --zone-glow: rgba(110, 100, 230, 0.3); }
+.fishing-tag[data-zone="reef"]  { --zone: #ffb4c4; --zone-line: rgba(230, 80, 110, 0.7);   --zone-glow: rgba(230, 60, 100, 0.32); }
+.fishing-tag[data-zone="oil"]   { --zone: #ffd278; --zone-line: rgba(230, 160, 50, 0.7);   --zone-glow: rgba(230, 150, 40, 0.3); }
+
+/* ---------- name of the catch, under the ring ---------- */
+#fishing-ui .fishing-result {
+  display: block;
+  min-height: 2.5rem;
+  margin: 0;
+  text-align: center;
+  font-family: "Cinzel Decorative", "Cinzel", serif;
+  font-weight: 700;
+  font-size: 1.3rem;
+  line-height: 1.15;
+  letter-spacing: 0.03em;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+#fishing-ui .fishing-result.hidden {
+  display: block;
+  visibility: hidden;
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+#fishing-ui .fishing-result.ok {
+  color: #f4dfaa;
+  text-shadow: 0 2px 0 #000, 0 0 16px rgba(232, 176, 80, 0.6);
+}
+
+#fishing-ui .fishing-result.ok.rarity-uncommon { color: #c6efb4; text-shadow: 0 2px 0 #000, 0 0 16px rgba(120, 220, 110, 0.55); }
+#fishing-ui .fishing-result.ok.rarity-rare     { color: #b4d6ff; text-shadow: 0 2px 0 #000, 0 0 16px rgba(110, 170, 255, 0.6); }
+#fishing-ui .fishing-result.ok.rarity-aberrant { color: #ff9a9a; text-shadow: 0 2px 0 #000, 0 0 18px rgba(230, 50, 60, 0.7); }
+
+#fishing-ui .fishing-result.bad {
+  font-family: "EB Garamond", Georgia, serif;
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: #c97a7a;
 }

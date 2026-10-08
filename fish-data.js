@@ -8,6 +8,10 @@
 //   traits: "reverse" (needle flips direction), "erratic" (needle speed surges),
 //           "drift" (green zones wander around the ring), "shrink" (zones narrow as the fish tires)
 //   shape — silhouette drawn in the centre of the fishing ring
+//
+// Selling price is driven mainly by weight (kg): every caught fish rolls its own weight
+// within the species' `weight` range and sells for weight × FISH_PRICE_PER_KG.
+// Only a few species carry a small premium via `priceMult` (rare and aberrant ones).
 
 // Reef zone boundaries (world x)
 const REEF_WX_START = -3800;
@@ -34,7 +38,7 @@ const FISH_SPECIES = [
     shape: "slim",
     name: "Sleď obecný",
     rarity: "common",
-    price: 6,
+    weight: [0.5, 1.8],
     icon: "🐟",
     color: "#8aa6b5",
     desc: "Obyčejná stříbrná rybka. Plave v mělčinách a drží se v hejnech.",
@@ -50,7 +54,7 @@ const FISH_SPECIES = [
     shape: "slim",
     name: "Makrela modrá",
     rarity: "common",
-    price: 8,
+    weight: [0.7, 2.2],
     icon: "🐟",
     color: "#6b8ea0",
     desc: "Rychlý plavec s pruhovaným hřbetem. Chutná, ale nijak zvláštní.",
@@ -66,7 +70,7 @@ const FISH_SPECIES = [
     shape: "round",
     name: "Treska tmavá",
     rarity: "common",
-    price: 10,
+    weight: [1.5, 5],
     icon: "🐟",
     color: "#8c9c7c",
     desc: "Spolehlivý úlovek chladných moří. Živí se při dně.",
@@ -82,7 +86,7 @@ const FISH_SPECIES = [
     shape: "flat",
     name: "Platýs bradavičnatý",
     rarity: "common",
-    price: 12,
+    weight: [1, 3.5],
     icon: "🐠",
     color: "#7c6a58",
     desc: "Plochá ryba ležící na písku. Obě oči má na jedné straně hlavy.",
@@ -98,7 +102,7 @@ const FISH_SPECIES = [
     shape: "eel",
     name: "Úhoř mořský",
     rarity: "uncommon",
-    price: 18,
+    weight: [1, 3.5],
     icon: "🐍",
     color: "#3a4a3e",
     desc: "Slizký, hadovitý tvor. Nerad se nechává chytit.",
@@ -114,7 +118,7 @@ const FISH_SPECIES = [
     shape: "slim",
     name: "Losos divoký",
     rarity: "uncommon",
-    price: 22,
+    weight: [2, 6.5],
     icon: "🐟",
     color: "#c08080",
     desc: "Svalnatá ryba bojující proti proudu. Má narůžovělé maso.",
@@ -130,7 +134,7 @@ const FISH_SPECIES = [
     shape: "ray",
     name: "Rejnok ostnatý",
     rarity: "uncommon",
-    price: 25,
+    weight: [2.5, 8],
     icon: "🛸",
     color: "#544e45",
     desc: "Plochý paryba s bičovitým ocasem. Plachtí vodou jako stín.",
@@ -146,7 +150,8 @@ const FISH_SPECIES = [
     shape: "angler",
     name: "Ďas mořský",
     rarity: "rare",
-    price: 45,
+    weight: [4, 14],
+    priceMult: 1.2,
     icon: "👹",
     color: "#4a3c3c",
     desc: "Dravá hlubinná ryba s bioluminiscenční lucerničkou na hlavě.",
@@ -162,7 +167,8 @@ const FISH_SPECIES = [
     shape: "gulper",
     name: "Šírotlamka hlubinná",
     rarity: "rare",
-    price: 55,
+    weight: [5, 16],
+    priceMult: 1.2,
     icon: "🐲",
     color: "#2a2233",
     desc: "Skoro celé její tělo tvoří obrovská rozevíratelná tlama plná jehliček.",
@@ -178,7 +184,8 @@ const FISH_SPECIES = [
     shape: "eye",
     name: "Jednooká parma",
     rarity: "aberrant",
-    price: 90,
+    weight: [4, 12],
+    priceMult: 1.6,
     icon: "👁️",
     color: "#a62b4c",
     desc: "Narušená mutace ryby. Její jediné lidsky vyhlížející oko tě upřeně sleduje.",
@@ -194,7 +201,8 @@ const FISH_SPECIES = [
     shape: "squid",
     name: "Chapadlovitá makrela",
     rarity: "aberrant",
-    price: 110,
+    weight: [6, 18],
+    priceMult: 1.6,
     icon: "🦑",
     color: "#7e2a8c",
     desc: "Namísto běžných ploutví jí ze stran vyrůstají malá chvějící se chapadélka.",
@@ -210,7 +218,8 @@ const FISH_SPECIES = [
     shape: "maw",
     name: "Zubatý škleb",
     rarity: "aberrant",
-    price: 140,
+    weight: [7, 20],
+    priceMult: 1.6,
     icon: "💀",
     color: "#421832",
     desc: "Její tělo je pokryté nepravidelnými zuby, které při vytažení z vody tiše cvakají.",
@@ -228,7 +237,7 @@ const FISH_SPECIES = [
     shape: "round",
     name: "Klaun korálový",
     rarity: "common",
-    price: 14,
+    weight: [1, 3],
     icon: "🐠",
     color: "#e86020",
     desc: "Pestrobarevná rybka skrývající se v sasankách. Na útesu ji najdeš všude.",
@@ -245,7 +254,7 @@ const FISH_SPECIES = [
     shape: "round",
     name: "Ryba papouščí",
     rarity: "uncommon",
-    price: 28,
+    weight: [2, 6],
     icon: "🦜",
     color: "#28c87a",
     desc: "Žvýká korály a exkretuje bílý písek. Její zuby vypadají jako zobák.",
@@ -262,7 +271,7 @@ const FISH_SPECIES = [
     shape: "spiny",
     name: "Ryba lví",
     rarity: "uncommon",
-    price: 35,
+    weight: [1.5, 5],
     icon: "🦁",
     color: "#c84040",
     desc: "Jedovaté ostny zdobí její rozepjaté ploutve. Krásná, ale smrtelně nebezpečná.",
@@ -279,7 +288,8 @@ const FISH_SPECIES = [
     shape: "ray",
     name: "Manta obrovská",
     rarity: "rare",
-    price: 70,
+    weight: [8, 22],
+    priceMult: 1.2,
     icon: "🌊",
     color: "#1a3a5c",
     desc: "Obří paryba plachtí vodou jako temný stín. Neškodná — pokud ji nevyrušíš.",
@@ -296,7 +306,8 @@ const FISH_SPECIES = [
     shape: "ghost",
     name: "Duch útesu",
     rarity: "rare",
-    price: 85,
+    weight: [4, 11],
+    priceMult: 1.3,
     icon: "👻",
     color: "#aaeecc",
     desc: "Průsvitná ryba, téměř neviditelná. Místní rybáři tvrdí, že se tvoří z duší ztracených námořníků.",
@@ -313,7 +324,8 @@ const FISH_SPECIES = [
     shape: "coral",
     name: "Korálový přízrak",
     rarity: "aberrant",
-    price: 160,
+    weight: [6, 16],
+    priceMult: 1.6,
     icon: "🪸",
     color: "#ff3399",
     desc: "Živý korálovitý útvar, který se pohybuje. Při pohledu na něj cítíš, jak ti mysl praská.",
@@ -332,7 +344,7 @@ const FISH_SPECIES = [
     shape: "flat",
     name: "Ropný platýs",
     rarity: "common",
-    price: 16,
+    weight: [1.5, 4.5],
     icon: "🐟",
     color: "#4a3c28",
     desc: "Pokrytý ropnou vrstvou. Maso chutná hořce, ale obchodníci se neptají.",
@@ -349,7 +361,7 @@ const FISH_SPECIES = [
     shape: "eel",
     name: "Mutovaný úhoř",
     rarity: "uncommon",
-    price: 32,
+    weight: [2, 6],
     icon: "🐍",
     color: "#3a5a2a",
     desc: "Chemikálie z vrtů způsobily na jeho kůži podivné výrůstky. Ale stále se chytá.",
@@ -366,7 +378,8 @@ const FISH_SPECIES = [
     shape: "squid",
     name: "Vrtná chobotnice",
     rarity: "rare",
-    price: 75,
+    weight: [5, 15],
+    priceMult: 1.2,
     icon: "🦑",
     color: "#2a2a3a",
     desc: "Žije mezi podmořskými nohami plošiny. Její chapadla jsou posetá leskle černými skvrnami.",
@@ -383,7 +396,8 @@ const FISH_SPECIES = [
     shape: "wraith",
     name: "Ropný přízrak",
     rarity: "aberrant",
-    price: 175,
+    weight: [6, 18],
+    priceMult: 1.6,
     icon: "🕳️",
     color: "#0a0a0a",
     desc: "Skoro neviditelné stvoření plující v ropné vrstvě. Tvé ruce zčernaly při vytažení. Ruce? Nebo spáry?",
@@ -394,6 +408,35 @@ const FISH_SPECIES = [
     oilOnly: true
   }
 ];
+
+const FISH_PRICE_PER_KG = 5;
+
+function rollFishWeight(species) {
+  const [lo, hi] = species.weight || [1, 2];
+  // Squared-ish roll: light fish are common, trophy specimens are rare
+  const w = lo + (hi - lo) * Math.pow(Math.random(), 1.5);
+  return Math.round(w * 10) / 10;
+}
+
+function computeFishPrice(species, weight) {
+  return Math.max(1, Math.round(weight * FISH_PRICE_PER_KG * (species.priceMult || 1)));
+}
+
+// One caught fish = the species data plus its own weight and price
+function makeCaughtFish(species) {
+  const weight = rollFishWeight(species);
+  const [lo, hi] = species.weight || [1, 2];
+  return {
+    ...species,
+    weight,
+    weightRatio: hi > lo ? (weight - lo) / (hi - lo) : 0.5,
+    price: computeFishPrice(species, weight)
+  };
+}
+
+function formatKg(w) {
+  return `${w.toFixed(1).replace(".", ",")} kg`;
+}
 
 function getRandomFishForDepth(depth, daylightFactor, inReef, inOilRig) {
   // daylightFactor: 0 = night, 1 = noon

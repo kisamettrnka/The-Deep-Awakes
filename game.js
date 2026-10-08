@@ -8,9 +8,7 @@ const ctx = canvas.getContext("2d");
 const fishingUI = document.getElementById("fishing-ui");
 const fishingNeedleEl = document.getElementById("fishing-needle");
 const fishingGreenArcsEl = document.getElementById("fishing-green-arcs");
-const catchFishIconEl = document.getElementById("catch-fish-icon");
-const fishingRedHintEl = document.getElementById("fishing-red-hint");
-const fishingRedCountEl = document.getElementById("fishing-red-count");
+const catchGaugeEl = document.getElementById("catch-gauge-canvas");
 const fishingResultEl = document.getElementById("fishing-result");
 
 const detektorUI = document.getElementById("detektor-ui");
@@ -74,18 +72,21 @@ let fishingDriftDir = 1;         // direction green zones wander ("drift" trait)
 let fishingHitPulse = 0;         // 1 → 0, drives the centre-view reaction to a hit
 let fishingMissPulse = 0;        // 1 → 0, same for a miss
 
+// When the catch is lost the line snaps and the fish bolts — played over FISHING_ESCAPE_MS
+const FISHING_ESCAPE_MS = 1250;
+let fishingEscapeAt = 0;         // performance.now() of the snap, 0 = no escape in progress
+let escapeCapture = null;        // where the fish was in the ring at the moment of the snap
+let gaugeEscapeP = -1;           // gauge progress frozen at the snap
+
+function fishingEscapeProgress() {
+  return fishingEscapeAt ? Math.min(1, (performance.now() - fishingEscapeAt) / FISHING_ESCAPE_MS) : 0;
+}
+
 /** Base needle speed (rad/s) at difficulty 1; each level adds FISHING_SPEED_PER_LEVEL */
 const FISHING_SPIN_SPEED = 3.1;
 const FISHING_SPEED_PER_LEVEL = 0.3;
 /** Green zones wander this fast (rad/s) for fish with the "drift" trait */
 const FISHING_DRIFT_SPEED = 0.55;
-
-const FISH_TRAIT_LABELS = {
-  reverse: "Mění směr",
-  erratic: "Cuká sebou",
-  drift: "Uhýbá",
-  shrink: "Slábne pomalu"
-};
 
 function getFishingParams(fish) {
   const d = Math.max(1, Math.min(5, fish.difficulty || 1));
@@ -415,10 +416,252 @@ function getBubbleNearPlayer() {
   return best;
 }
 
-function updateCatchFishIcon() {
-  if (!catchFishIconEl) return;
-  const p = Math.min(1, Math.max(0, catchProgress));
-  catchFishIconEl.style.bottom = `${12 + p * 72}%`;
+// =====================================================================
+// FISHING — depth gauge: the hooked fish is hauled from the dark up to the surface
+// =====================================================================
+
+let gaugeShown = 0;      // eased copy of catchProgress so every pull glides instead of jumping
+let gaugeBubbles = [];
+
+function gaugeRoundRect(g, x, y, w, h, r) {
+  g.beginPath();
+  g.moveTo(x + r, y);
+  g.arcTo(x + w, y, x + w, y + h, r);
+  g.arcTo(x + w, y + h, x, y + h, r);
+  g.arcTo(x, y + h, x, y, r);
+  g.arcTo(x, y, x + w, y, r);
+  g.closePath();
+}
+
+function resetCatchGauge() {
+  gaugeShown = 0;
+  gaugeBubbles = [];
+}
+
+function drawCatchGauge(dt) {
+  const c = catchGaugeEl;
+  if (!c || !hookedFish || !fishingParams) return;
+  const g = c.getContext("2d");
+  const W = 56, H = 180;
+  const K = c.width / W;
+  const t = performance.now() / 1000;
+  const d = fishingParams.difficulty;
+
+  const esc = fishingEscapeProgress();
+  if (esc > 0) {
+    if (gaugeEscapeP < 0) gaugeEscapeP = gaugeShown;
+  } else {
+    gaugeEscapeP = -1;
+    gaugeShown += (catchProgress - gaugeShown) * Math.min(1, dt * 7);
+  }
+  const p = Math.max(0, Math.min(1, esc > 0 ? gaugeEscapeP : gaugeShown));
+  const fall = esc * esc;
+
+  g.setTransform(K, 0, 0, K, 0, 0);
+  g.clearRect(0, 0, W, H);
+
+  const tubeX = 7, tubeW = 28, top = 18, bot = H - 8;
+  const cx = tubeX + tubeW / 2;
+  const travelTop = top + 14, travelBot = bot - 14;
+  const fishY0 = travelBot - p * (travelBot - travelTop);
+  // After the snap the fish drops back into the dark
+  const fishY = fishY0 + (bot + 16 - fishY0) * fall;
+  const shake = Math.sin(t * 46) * fishingMissPulse * 3;
+  const fishX = cx + Math.sin(t * (1.4 + d * 0.35)) * (2 + d * 1.1) + shake;
+  const rgb = fishHexToRgb(hookedFish.color || "#8aa6b5");
+  const aberrant = hookedFish.rarity === "aberrant";
+
+  // Tube glass with the water inside: bright at the surface, black in the deep
+  g.save();
+  gaugeRoundRect(g, tubeX, top, tubeW, bot - top, 8);
+  g.clip();
+  const water = g.createLinearGradient(0, top, 0, bot);
+  water.addColorStop(0, "#3d8a8a");
+  water.addColorStop(0.3, "#1a4a56");
+  water.addColorStop(0.7, "#082028");
+  water.addColorStop(1, "#010406");
+  g.fillStyle = water;
+  g.fillRect(tubeX, top, tubeW, bot - top);
+
+  // Light shafts sliding down from the surface
+  g.globalCompositeOperation = "screen";
+  for (let k = 0; k < 2; k++) {
+    const sx = tubeX + ((k * 0.55 + t * 0.05) % 1.2) * tubeW - 4;
+    const sh = g.createLinearGradient(0, top, 0, top + 90);
+    sh.addColorStop(0, "rgba(170,235,230,0.18)");
+    sh.addColorStop(1, "rgba(170,235,230,0)");
+    g.fillStyle = sh;
+    g.beginPath();
+    g.moveTo(sx, top);
+    g.lineTo(sx + 7, top);
+    g.lineTo(sx + 1, top + 90);
+    g.lineTo(sx - 9, top + 90);
+    g.fill();
+  }
+  g.globalCompositeOperation = "source-over";
+
+  // Hit-step notches: one for every hit still needed, lit once the fish has passed them
+  const steps = fishingParams.hitsToLand;
+  for (let k = 1; k < steps; k++) {
+    const ny = travelBot - (k / steps) * (travelBot - travelTop);
+    const reached = p >= k / steps - 1e-3;
+    g.strokeStyle = reached ? "rgba(90,235,150,0.55)" : "rgba(200,220,220,0.16)";
+    g.lineWidth = 1;
+    g.beginPath();
+    g.moveTo(tubeX, ny);
+    g.lineTo(tubeX + 7, ny);
+    g.moveTo(tubeX + tubeW - 7, ny);
+    g.lineTo(tubeX + tubeW, ny);
+    g.stroke();
+  }
+
+  // Fishing line from the rod tip down to the fish, slack when it is calm and taut when it pulls
+  const taut = Math.min(1, 0.25 + fishingHitPulse * 0.6 + fishingMissPulse * 0.4);
+  g.strokeStyle = `rgba(240,236,220,${0.5 + fishingHitPulse * 0.35})`;
+  g.lineWidth = 1;
+  if (esc === 0) {
+    g.beginPath();
+    g.moveTo(cx, top - 4);
+    g.quadraticCurveTo(cx + Math.sin(t * 2.2) * 5 * (1 - taut), (top + fishY) / 2, fishX, fishY - 9);
+    g.stroke();
+  } else {
+    // Snapped: the upper line recoils to the ring, a short strand follows the sinking fish
+    const up = 1 - Math.pow(1 - Math.min(1, esc * 2.6), 3);
+    const cutY = (fishY0 - 9) + (top - 4 - (fishY0 - 9)) * up;
+    g.beginPath();
+    g.moveTo(cx, top - 4);
+    g.quadraticCurveTo(cx + Math.sin(t * 36) * 5 * (1 - up), (top + cutY) / 2, cx + Math.sin(t * 40) * 3 * (1 - up), cutY);
+    g.stroke();
+    g.strokeStyle = `rgba(240,236,220,${0.5 * (1 - esc)})`;
+    g.beginPath();
+    g.moveTo(fishX, fishY - 9);
+    g.quadraticCurveTo(fishX + Math.sin(t * 26) * 4, fishY - 15, fishX + Math.sin(t * 21) * 5, fishY - 22 + esc * 8);
+    g.stroke();
+  }
+
+  // Bubbles trailing off the fish
+  if (Math.random() < dt * (3 + d * 2)) {
+    gaugeBubbles.push({ x: fishX + (Math.random() - 0.5) * 6, y: fishY - 6, r: 0.8 + Math.random() * 1.4, v: 14 + Math.random() * 16, ph: Math.random() * 6 });
+  }
+  for (let i = gaugeBubbles.length - 1; i >= 0; i--) {
+    const b = gaugeBubbles[i];
+    b.y -= b.v * dt;
+    if (b.y < top + 2) { gaugeBubbles.splice(i, 1); continue; }
+    g.strokeStyle = `rgba(200,240,240,${Math.min(0.6, (b.y - top) / 40)})`;
+    g.lineWidth = 0.8;
+    g.beginPath();
+    g.arc(b.x + Math.sin(t * 4 + b.ph) * 1.5, b.y, b.r, 0, Math.PI * 2);
+    g.stroke();
+  }
+
+  // The fish itself — head up, tail beating harder for tougher species
+  if (aberrant) {
+    const ag = g.createRadialGradient(fishX, fishY, 1, fishX, fishY, 20);
+    ag.addColorStop(0, `rgba(210,40,60,${0.45 + 0.2 * Math.sin(t * 4)})`);
+    ag.addColorStop(1, "rgba(210,40,60,0)");
+    g.fillStyle = ag;
+    g.fillRect(tubeX, fishY - 22, tubeW, 44);
+  }
+  g.save();
+  if (esc > 0) g.globalAlpha = 1 - 0.85 * fall;
+  g.translate(fishX, fishY);
+  g.rotate(-Math.PI / 2 + Math.sin(t * (5 + d * 1.5)) * 0.1 + shake * 0.05);
+  const flap = Math.sin(t * (8 + d * 2.5));
+  g.fillStyle = fishShade(rgb, -0.2);
+  g.beginPath();
+  g.moveTo(-6, 0);
+  g.lineTo(-14, -6 + flap * 2.5);
+  g.quadraticCurveTo(-11, flap * 1.5, -14, 6 + flap * 2.5);
+  g.closePath();
+  g.fill();
+  const body = g.createLinearGradient(0, -6, 0, 6);
+  body.addColorStop(0, fishShade(rgb, 0.3));
+  body.addColorStop(0.55, fishShade(rgb, 0));
+  body.addColorStop(1, fishShade(rgb, -0.4));
+  g.fillStyle = body;
+  g.beginPath();
+  g.ellipse(0, 0, 10, 6, 0, 0, Math.PI * 2);
+  g.fill();
+  g.strokeStyle = "rgba(225,242,255,0.35)";
+  g.lineWidth = 0.8;
+  g.stroke();
+  g.fillStyle = "#f2efe6";
+  g.beginPath();
+  g.arc(6, -1.8, 1.7, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = "#050505";
+  g.beginPath();
+  g.arc(6.4, -1.8, 0.9, 0, Math.PI * 2);
+  g.fill();
+  g.restore();
+
+  // Surface waves over the top of the water
+  g.strokeStyle = "rgba(210,248,245,0.7)";
+  g.lineWidth = 1.2;
+  g.beginPath();
+  for (let x = tubeX; x <= tubeX + tubeW; x += 2) {
+    const y = top + 3 + Math.sin(x * 0.55 + t * 3) * 1.3;
+    if (x === tubeX) g.moveTo(x, y); else g.lineTo(x, y);
+  }
+  g.stroke();
+
+  // Flash inside the tube on hit / miss
+  if (fishingHitPulse > 0) {
+    g.fillStyle = `rgba(110,255,170,${fishingHitPulse * 0.22})`;
+    g.fillRect(tubeX, top, tubeW, bot - top);
+  }
+  if (fishingMissPulse > 0) {
+    g.fillStyle = `rgba(255,60,50,${fishingMissPulse * 0.28})`;
+    g.fillRect(tubeX, top, tubeW, bot - top);
+  }
+  g.restore();
+
+  // Glass rim and wooden frame
+  g.lineWidth = 3;
+  g.strokeStyle = "#2a1e18";
+  gaugeRoundRect(g, tubeX, top, tubeW, bot - top, 8);
+  g.stroke();
+  g.lineWidth = 1;
+  g.strokeStyle = esc > 0 ? `rgba(255,80,70,${Math.max(0.35, 1 - esc)})`
+    : fishingHitPulse > 0 ? `rgba(110,255,170,${0.35 + fishingHitPulse * 0.6})`
+    : fishingMissPulse > 0 ? `rgba(255,80,70,${0.35 + fishingMissPulse * 0.6})` : "rgba(150,120,95,0.45)";
+  gaugeRoundRect(g, tubeX - 1.5, top - 1.5, tubeW + 3, bot - top + 3, 9);
+  g.stroke();
+
+  // Rod tip anchor at the top, and a brass ring the line passes through
+  g.strokeStyle = "#a88848";
+  g.lineWidth = 1.4;
+  g.beginPath();
+  g.arc(cx, top - 6, 3, 0, Math.PI * 2);
+  g.stroke();
+
+  // Glowing progress bar beside the tube, notched per hit
+  const barX = tubeX + tubeW + 7, barW = 4;
+  g.fillStyle = "rgba(255,255,255,0.08)";
+  gaugeRoundRect(g, barX, top, barW, bot - top, 2);
+  g.fill();
+  const barH = Math.max(0, (bot - top) * p * (1 - Math.min(1, esc * 1.6)));
+  if (barH > 0.5) {
+    const bar = g.createLinearGradient(0, bot, 0, top);
+    bar.addColorStop(0, "#1f9a5c");
+    bar.addColorStop(1, p > 0.8 ? "#d8f56a" : "#5af0a0");
+    g.save();
+    g.shadowColor = "rgba(90,240,160,0.8)";
+    g.shadowBlur = 4 + fishingHitPulse * 8;
+    g.fillStyle = bar;
+    gaugeRoundRect(g, barX, bot - barH, barW, barH, 2);
+    g.fill();
+    g.restore();
+  }
+  g.strokeStyle = "rgba(0,0,0,0.65)";
+  g.lineWidth = 1;
+  for (let k = 1; k < steps; k++) {
+    const ny = bot - (k / steps) * (bot - top);
+    g.beginPath();
+    g.moveTo(barX - 1, ny);
+    g.lineTo(barX + barW + 1, ny);
+    g.stroke();
+  }
 }
 
 // Advances needle, wandering zones and the slow passive reel-in by one frame
@@ -442,7 +685,6 @@ function stepFishing(dt) {
 
   // The rod creeps up on its own while the needle spins
   catchProgress = Math.min(1, catchProgress + fishingParams.passiveRise * dt);
-  updateCatchFishIcon();
 
   fishingHitPulse = Math.max(0, fishingHitPulse - dt * 2.2);
   fishingMissPulse = Math.max(0, fishingMissPulse - dt * 2.2);
@@ -451,19 +693,21 @@ function stepFishing(dt) {
 }
 
 function updateFishingHudVisuals() {
-  if (!fishingMode || fishingLocked || !fishingNeedleEl || !fishingParams) return;
+  if (!fishingMode || !fishingNeedleEl || !fishingParams) return;
+  if (fishingEscapeAt) {
+    fishingHitPulse = Math.max(0, fishingHitPulse - frameDt * 2.2);
+    fishingMissPulse = Math.max(0, fishingMissPulse - frameDt * 2.2);
+    drawHookedFishView();
+    drawCatchGauge(frameDt);
+    return;
+  }
+  if (fishingLocked) return;
   stepFishing(frameDt);
   if (!fishingMode || fishingLocked) return;
   const deg = (fishingNeedleAngle * 180) / Math.PI;
   fishingNeedleEl.setAttribute("transform", `translate(100 100) rotate(${deg})`);
   drawHookedFishView();
-}
-
-function showFishingRedHint() {
-  if (fishingRedHintEl) fishingRedHintEl.classList.remove("hidden");
-  if (fishingRedCountEl) fishingRedCountEl.textContent = String(redStreak);
-  const maxEl = document.getElementById("fishing-red-max");
-  if (maxEl) maxEl.textContent = String(getMaxRedStreak());
+  drawCatchGauge(frameDt);
 }
 
 // Web Animations restart reliably on every call (class toggling doesn't on SVG)
@@ -496,25 +740,6 @@ function flashFishingFeedback(hit) {
     }
     panel.animate(frames, { duration: hit ? 380 : 420, easing: "ease-out" });
   }
-}
-
-// Fish yanks back on the line — the gauge icon jerks downward
-function jerkCatchFishIcon() {
-  if (!catchFishIconEl) return;
-  catchFishIconEl.getAnimations().forEach((a) => a.cancel());
-  catchFishIconEl.animate(
-    [
-      { transform: "rotate(0deg)" },
-      { transform: "rotate(-25deg)" },
-      { transform: "rotate(18deg)" },
-      { transform: "rotate(0deg)" }
-    ],
-    { duration: 360, easing: "ease-out" }
-  );
-}
-
-function hideFishingRedHint() {
-  if (fishingRedHintEl) fishingRedHintEl.classList.add("hidden");
 }
 
 // =====================================================================
@@ -977,20 +1202,87 @@ function drawHookedFishView() {
   const fy = S / 2 + Math.sin(t * (1.2 + d * 0.22) + 1) * S * 0.07 * struggle + (1 - catchProgress) * S * 0.06;
   const facing = Math.cos(t * (0.8 + d * 0.18)) * (fishingMissPulse > 0.3 ? -fishViewDartDir : 1) >= 0 ? 1 : -1;
   const wig = Math.sin(t * (7 + d * 2.2)) * (0.35 + struggle * 0.25);
-  const scale = (S / 180) * (0.82 + catchProgress * 0.28 + fishingHitPulse * 0.14);
+  const scale = (S / 180) * (0.82 + catchProgress * 0.28 + fishingHitPulse * 0.14) * (0.88 + 0.24 * (hookedFish.weightRatio || 0));
 
-  // Fishing line from the surface to the mouth — taut on a hit
-  const mouthX = fx + facing * 44 * scale;
-  g.strokeStyle = `rgba(235,230,215,${0.35 + fishingHitPulse * 0.5})`;
-  g.lineWidth = 1;
-  g.beginPath();
-  g.moveTo(S / 2, -2);
-  g.quadraticCurveTo(S / 2 + (1 - fishingHitPulse) * 14 * Math.sin(t * 2), fy * 0.5, mouthX, fy);
-  g.stroke();
+  // Escape: the line snaps at the mouth and the fish bolts off, trailing a bit of line
+  const esc = fishingEscapeProgress();
+  if (esc > 0 && !escapeCapture) escapeCapture = { fx, fy, facing, scale };
+  const cap = escapeCapture;
+  const ease = esc * esc;
+  const dfx = esc > 0 ? cap.fx + cap.facing * S * 0.9 * ease : fx;
+  const dfy = esc > 0 ? cap.fy + S * 0.3 * ease : fy;
+  const dfacing = esc > 0 ? cap.facing : facing;
+  const dscale = esc > 0 ? cap.scale * (1 - 0.4 * esc) : scale;
+  const dwig = esc > 0 ? Math.sin(t * 34) * 0.8 : wig;
+
+  if (esc === 0) {
+    // Fishing line from the surface to the mouth — taut on a hit
+    const mouthX = fx + facing * 44 * scale;
+    g.strokeStyle = `rgba(235,230,215,${0.35 + fishingHitPulse * 0.5})`;
+    g.lineWidth = 1;
+    g.beginPath();
+    g.moveTo(S / 2, -2);
+    g.quadraticCurveTo(S / 2 + (1 - fishingHitPulse) * 14 * Math.sin(t * 2), fy * 0.5, mouthX, fy);
+    g.stroke();
+  } else {
+    const m0x = cap.fx + cap.facing * 44 * cap.scale;
+    const m0y = cap.fy;
+
+    // Upper half of the broken line whips back up toward the surface
+    const up = 1 - Math.pow(1 - Math.min(1, esc * 2.4), 3);
+    const endX = m0x + (S / 2 - m0x) * up + Math.sin(t * 38) * 8 * (1 - up);
+    const endY = m0y + (-2 - m0y) * up;
+    g.strokeStyle = `rgba(235,230,215,${0.6 * (1 - up * 0.6)})`;
+    g.lineWidth = 1;
+    g.beginPath();
+    g.moveTo(S / 2, -2);
+    g.quadraticCurveTo((S / 2 + endX) / 2 + Math.sin(t * 30) * 6 * (1 - up), endY / 2, endX, endY);
+    g.stroke();
+
+    // Lower end stays in the fish's mouth and flutters behind it
+    const mx = dfx + dfacing * 44 * dscale;
+    g.strokeStyle = `rgba(235,230,215,${0.55 * (1 - esc)})`;
+    g.beginPath();
+    g.moveTo(mx, dfy);
+    g.quadraticCurveTo(mx - dfacing * 10 + Math.sin(t * 28) * 4, dfy - 8, mx - dfacing * 22 + Math.sin(t * 22) * 5, dfy - 20 + esc * 10);
+    g.stroke();
+
+    // Burst of bubbles where it was hooked
+    for (let k = 0; k < 9; k++) {
+      g.strokeStyle = `rgba(200,235,240,${(1 - esc) * 0.6})`;
+      g.lineWidth = 1;
+      g.beginPath();
+      g.arc(
+        cap.fx + Math.sin(k * 2.3) * (8 + 26 * esc),
+        cap.fy - (0.1 + 0.25 * (k % 4) / 3) * S * esc * 1.4,
+        1.4 + (k % 3) * 1.2, 0, Math.PI * 2
+      );
+      g.stroke();
+    }
+
+    // Snap flash
+    if (esc < 0.22) {
+      const k = esc / 0.22;
+      const fl = g.createRadialGradient(m0x, m0y, 0, m0x, m0y, 8 + 24 * k);
+      fl.addColorStop(0, `rgba(255,255,255,${(1 - k) * 0.9})`);
+      fl.addColorStop(1, "rgba(255,255,255,0)");
+      g.fillStyle = fl;
+      g.fillRect(0, 0, S, S);
+      g.strokeStyle = `rgba(255,245,220,${1 - k})`;
+      g.lineWidth = 1.5;
+      for (let r = 0; r < 7; r++) {
+        const ang = r * 0.9 + 0.3;
+        g.beginPath();
+        g.moveTo(m0x + Math.cos(ang) * (3 + 8 * k), m0y + Math.sin(ang) * (3 + 8 * k));
+        g.lineTo(m0x + Math.cos(ang) * (9 + 18 * k), m0y + Math.sin(ang) * (9 + 18 * k));
+        g.stroke();
+      }
+    }
+  }
 
   // Aberrant fish radiate a sick glow
   if (aberrant) {
-    const ag = g.createRadialGradient(fx, fy, 4, fx, fy, S * 0.42);
+    const ag = g.createRadialGradient(dfx, dfy, 4, dfx, dfy, S * 0.42);
     ag.addColorStop(0, `rgba(200,30,50,${0.25 + 0.15 * Math.sin(t * 3)})`);
     ag.addColorStop(1, "rgba(200,30,50,0)");
     g.fillStyle = ag;
@@ -998,14 +1290,15 @@ function drawHookedFishView() {
   }
 
   g.save();
-  g.translate(fx, fy);
-  g.rotate(wig * 0.12 + Math.sin(t * 1.6) * 0.06);
-  g.scale(scale * facing, scale);
-  (FISH_SHAPES[hookedFish.shape] || FISH_SHAPES.slim)(g, rgb, t, wig);
+  if (esc > 0) g.globalAlpha = 1 - 0.9 * Math.pow(esc, 1.5);
+  g.translate(dfx, dfy);
+  g.rotate(dwig * 0.12 + Math.sin(t * 1.6) * 0.06);
+  g.scale(dscale * dfacing, dscale);
+  (FISH_SHAPES[hookedFish.shape] || FISH_SHAPES.slim)(g, rgb, t, dwig);
   g.restore();
 
   // Murk: the fish emerges from the dark as it is reeled in
-  g.fillStyle = `rgba(2,8,10,${0.5 * (1 - catchProgress)})`;
+  g.fillStyle = `rgba(2,8,10,${Math.min(0.95, 0.5 * (1 - catchProgress) + esc * 0.45)})`;
   g.fillRect(0, 0, S, S);
 
   if (fishingHitPulse > 0) {
@@ -1030,12 +1323,16 @@ function drawHookedFishView() {
 function rollHookedFish() {
   const distanceRatio = Math.min(1.0, Math.abs(player.x) / (worldWidth / 2));
   const rolledDepth = 50 + distanceRatio * 320 + Math.random() * 30;
-  return getRandomFishForDepth(rolledDepth, getDaylightFactor(), isInReefZone(player.x), isInOilRigZone(player.x));
+  const species = getRandomFishForDepth(rolledDepth, getDaylightFactor(), isInReefZone(player.x), isInOilRigZone(player.x));
+  return makeCaughtFish(species);
 }
 
 function updateFishingInfoPanel() {
   const titleEl = document.getElementById("fishing-title");
-  if (titleEl) titleEl.textContent = hookedFish.rarity === "aberrant" ? "Něco… zabralo" : "Něco zabralo!";
+  if (titleEl) {
+    titleEl.textContent = hookedFish.rarity === "aberrant" ? "Něco… zabralo" : "Něco zabralo!";
+    titleEl.classList.toggle("aberrant", hookedFish.rarity === "aberrant");
+  }
 
   const diffEl = document.getElementById("fishing-difficulty");
   if (diffEl) {
@@ -1052,23 +1349,14 @@ function updateFishingInfoPanel() {
 
   const zoneEl = document.getElementById("fishing-zone-tag");
   if (zoneEl) {
-    let zone = "POBŘEŽÍ";
-    if (isInReefZone(player.x)) zone = "KRVAVÝ ÚTES";
-    else if (isInOilRigZone(player.x)) zone = "ROPNÁ VĚŽ";
-    else if (Math.abs(player.x) > worldWidth * 0.3) zone = "HLUBINY";
+    let zone = "POBŘEŽÍ", key = "coast";
+    if (isInReefZone(player.x)) { zone = "KRVAVÝ ÚTES"; key = "reef"; }
+    else if (isInOilRigZone(player.x)) { zone = "ROPNÁ VĚŽ"; key = "oil"; }
+    else if (Math.abs(player.x) > worldWidth * 0.3) { zone = "HLUBINY"; key = "deep"; }
     zoneEl.textContent = zone;
+    zoneEl.dataset.zone = key;
   }
 
-  const traitsEl = document.getElementById("fishing-traits");
-  if (traitsEl) {
-    traitsEl.innerHTML = "";
-    fishingParams.traits.forEach((t) => {
-      const tag = document.createElement("span");
-      tag.className = "fishing-trait";
-      tag.textContent = FISH_TRAIT_LABELS[t] || t;
-      traitsEl.appendChild(tag);
-    });
-  }
 }
 
 function tryStartFishing() {
@@ -1088,6 +1376,9 @@ function tryStartFishing() {
   fishingDriftDir = Math.random() < 0.5 ? 1 : -1;
   fishingHitPulse = 0;
   fishingMissPulse = 0;
+  fishingEscapeAt = 0;
+  escapeCapture = null;
+  resetCatchGauge();
   updateFishingInfoPanel();
 
   if (fishingUI) {
@@ -1098,12 +1389,10 @@ function tryStartFishing() {
     fishingResultEl.classList.add("hidden");
     fishingResultEl.textContent = "";
   }
-  hideFishingRedHint();
   
   currentFishingZones = generateFishingGreenZones();
   initFishingRingSvg();
   
-  updateCatchFishIcon();
 }
 
 function tryFishingHit() {
@@ -1111,7 +1400,6 @@ function tryFishingHit() {
 
   if (isNeedleInGreen(fishingNeedleAngle)) {
     catchProgress += 1 / fishingParams.hitsToLand;
-    updateCatchFishIcon();
     flashFishingFeedback(true);
     fishingHitPulse = 1;
     
@@ -1123,13 +1411,10 @@ function tryFishingHit() {
     }
   } else {
     redStreak++;
-    showFishingRedHint();
     flashFishingFeedback(false);
     fishingMissPulse = 1;
     if (catchProgress > 0) {
       catchProgress = Math.max(0, catchProgress - fishingParams.missSlip / fishingParams.hitsToLand);
-      updateCatchFishIcon();
-      jerkCatchFishIcon();
     }
     if (redStreak >= getMaxRedStreak()) {
       endFishingFail();
@@ -1169,13 +1454,8 @@ function endFishingSuccess() {
   caughtFish = inventory.length;
 
   if (fishingResultEl) {
-    let rarityText = "Běžná";
-    if (caught.rarity === "uncommon") rarityText = "Neobvyklá";
-    else if (caught.rarity === "rare") rarityText = "Vzácná";
-    else if (caught.rarity === "aberrant") rarityText = "Abnormální";
-    
-    fishingResultEl.innerHTML = `Chyceno: <strong>${caught.name}</strong> (${rarityText})!`;
-    fishingResultEl.className = `fishing-result ok`;
+    fishingResultEl.textContent = caught.name;
+    fishingResultEl.className = `fishing-result ok rarity-${caught.rarity}`;
     fishingResultEl.classList.remove("hidden");
   }
 
@@ -1206,19 +1486,19 @@ function endFishingSuccess() {
 
 function endFishingFail() {
   fishingLocked = true;
-  if (fishingResultEl) {
-    const n = getMaxRedStreak();
-    fishingResultEl.textContent = `${n} ${n >= 5 ? "chyb" : "chyby"} \u2014 ryba unikla.`;
-    fishingResultEl.className = "fishing-result bad";
-    fishingResultEl.classList.remove("hidden");
-  }
+  fishingEscapeAt = performance.now();
+  escapeCapture = null;
+  // Fresh splash where the floats were, a small jolt, then the panel closes after the fish is gone
+  boatRods.forEach((r) => { r.landedAt = fishingEscapeAt; });
+  triggerScreenShake(4);
   window.setTimeout(() => {
     fishingLocked = false;
     redStreak = 0;
     catchProgress = 0;
+    fishingEscapeAt = 0;
+    escapeCapture = null;
     closeFishingPanel();
-    if (fishingResultEl) fishingResultEl.classList.add("hidden");
-  }, 900);
+  }, FISHING_ESCAPE_MS + 250);
 }
 
 function handleSpaceAction() {
@@ -3458,10 +3738,12 @@ function drawBoatRod(r, waterY, t) {
   const lineDrop = Math.max(0, Math.min(1, (r.p - 0.3) / 0.7));
   const landed = r.p >= 1;
   const d = fishingParams ? fishingParams.difficulty : 1;
+  const esc = fishingEscapeProgress();
+  const snapped = esc > 0.03;
 
   // Fight: the harder the fish, the more the rod bends; a miss makes it jerk, a hit takes slack
   let tension = 0;
-  if (landed && fishingMode) {
+  if (landed && fishingMode && esc === 0) {
     tension = 0.3 + catchProgress * 0.25 + d * 0.06
       + Math.sin(t * (5 + d) + r.phase) * 0.12
       + fishingMissPulse * 0.55 - fishingHitPulse * 0.2;
@@ -3470,7 +3752,8 @@ function drawBoatRod(r, waterY, t) {
 
   const a = r.idle + (r.out - r.idle) * easeOutBack(swing);
   const whip = Math.sin(swing * Math.PI) * 7;      // rod flexes as it is thrown
-  const bend = whip + (landed ? 3 + tension * 15 : 0);
+  // After the snap the rod springs back and shivers as it settles
+  const bend = whip + (esc > 0 ? 3 + 11 * Math.exp(-esc * 4.5) * Math.cos(esc * 26) : landed ? 3 + tension * 15 : 0);
   const dx = r.dir * Math.cos(a);
   const dy = -Math.sin(a);
 
@@ -3515,15 +3798,17 @@ function drawBoatRod(r, waterY, t) {
   const endY = tipY + (waterY - tipY) * lineDrop + dip;
   const sag = (1 - Math.min(1, tension * 1.6)) * 7 * (landed ? 1 : lineDrop);
 
-  ctx.strokeStyle = "rgba(235,230,215,0.6)";
-  ctx.lineWidth = 0.9;
-  ctx.beginPath();
-  ctx.moveTo(tipX, tipY);
-  ctx.quadraticCurveTo((tipX + endX) / 2 - r.dir * sag, (tipY + endY) / 2, endX, endY);
-  ctx.stroke();
+  if (!snapped) {
+    ctx.strokeStyle = "rgba(235,230,215,0.6)";
+    ctx.lineWidth = 0.9;
+    ctx.beginPath();
+    ctx.moveTo(tipX, tipY);
+    ctx.quadraticCurveTo((tipX + endX) / 2 - r.dir * sag, (tipY + endY) / 2, endX, endY);
+    ctx.stroke();
+  }
 
   // Under the surface: faint line down to a lure
-  if (landed) {
+  if (landed && !snapped) {
     const lureY = waterY + 42 + Math.sin(t * 1.4 + r.phase) * 3;
     ctx.strokeStyle = "rgba(235,230,215,0.2)";
     ctx.beginPath();
@@ -3561,6 +3846,22 @@ function drawBoatRod(r, waterY, t) {
         ctx.fill();
       }
     }
+  }
+
+  // Snapped: only a loose strand flutters from the tip, the float is gone
+  if (snapped) {
+    const k = Math.min(1, (esc - 0.03) / 0.97);
+    const len = 24 * (1 - 0.4 * k);
+    ctx.strokeStyle = `rgba(235,230,215,${0.6 * (1 - k * 0.7)})`;
+    ctx.lineWidth = 0.9;
+    ctx.beginPath();
+    ctx.moveTo(tipX, tipY);
+    ctx.quadraticCurveTo(
+      tipX + Math.sin(esc * 40 + r.phase) * 8 * (1 - k) + r.side * 0.3, tipY + len * 0.5,
+      tipX + Math.sin(esc * 34 + 1 + r.phase) * 10 * (1 - k) + r.side * 0.2, tipY + len
+    );
+    ctx.stroke();
+    return;
   }
 
   // Float
@@ -4018,8 +4319,10 @@ function sellAllFish() {
   }
   
   let totalVal = 0;
+  let totalKg = 0;
   inventory.forEach(f => {
     totalVal += f.price;
+    totalKg += f.weight || 0;
   });
   
   gold += totalVal;
@@ -4034,7 +4337,7 @@ function sellAllFish() {
   updateMarketUI();
   
   if (marketResultEl) {
-    marketResultEl.textContent = `Prodáno ${count} ryb za $${totalVal}!`;
+    marketResultEl.textContent = `Prodáno ${count} ryb (${formatKg(totalKg)}) za $${totalVal}!`;
     marketResultEl.className = "market-result ok";
     marketResultEl.classList.remove("hidden");
   }
@@ -4185,7 +4488,7 @@ function updateInventoryUI() {
       
       tooltipEl.innerHTML = `
         <strong>${fish.name}</strong><br>
-        <span style="color:#a89878; font-size:0.75rem;">${rarityText}</span><br>
+        <span style="color:#a89878; font-size:0.75rem;">${rarityText}${fish.weight ? " · " + formatKg(fish.weight) : ""}</span><br>
         <span style="color:#d8cbb0;">$${fish.price}</span>
       `;
       slotEl.appendChild(tooltipEl);

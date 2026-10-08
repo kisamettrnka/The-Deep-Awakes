@@ -6,13 +6,13 @@
   <title>Temné moře</title>
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="stylesheet" href="style.css?v=4">
-  <link rel="stylesheet" href="fishing-minigame.css?v=6">
+  <link rel="stylesheet" href="fishing-minigame.css?v=12">
   <link rel="stylesheet" href="detektor-minigame.css?v=4">
   <link rel="stylesheet" href="market.css?v=4">
   <link rel="stylesheet" href="inventory.css?v=4">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600&family=EB+Garamond:ital,wght@0,500;0,600;1,500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600&family=Cinzel+Decorative:wght@700;900&family=EB+Garamond:ital,wght@0,500;0,600;1,500&display=swap" rel="stylesheet">
 </head>
 <body>
 <div id="error-log" style="position: absolute; top: 0; left: 0; z-index: 9999; color: red; background: black; padding: 10px; font-family: monospace;"></div>
@@ -214,11 +214,7 @@
 <div id="fishing-ui" class="hidden" aria-hidden="true">
   <div class="fishing-panel">
     <div class="fishing-col fishing-progress-col">
-      <div class="v-gauge">
-        <div class="v-gauge-water" aria-hidden="true"></div>
-        <div class="v-gauge-track"></div>
-        <div id="catch-fish-icon" class="catch-fish-icon" aria-hidden="true"></div>
-      </div>
+      <canvas id="catch-gauge-canvas" width="112" height="360" aria-hidden="true"></canvas>
     </div>
 
     <div class="fishing-col fishing-ring-col">
@@ -239,16 +235,14 @@
       </svg>
       <canvas id="fishing-fish-canvas" width="172" height="172" aria-hidden="true"></canvas>
       </div>
+      <p id="fishing-result" class="fishing-result hidden"></p>
     </div>
 
     <div class="fishing-col fishing-info-col">
       <h2 id="fishing-title">Něco zabralo!</h2>
+      <span class="fishing-rule" aria-hidden="true"></span>
       <p class="fishing-stock">Obtížnost: <span id="fishing-difficulty" class="fishing-difficulty"></span></p>
       <span id="fishing-zone-tag" class="fishing-tag">POBŘEŽÍ</span>
-      <p id="fishing-traits" class="fishing-traits"></p>
-      <p class="fishing-instruct">Ve správný okamžik stiskni <kbd>SPACE</kbd> — jen ve <strong>zeleném</strong> oblouku.</p>
-      <p id="fishing-red-hint" class="fishing-red-hint hidden">Chyby: <span id="fishing-red-count">0</span> / <span id="fishing-red-max">3</span></p>
-      <p id="fishing-result" class="fishing-result hidden"></p>
     </div>
   </div>
 </div>
@@ -283,7 +277,7 @@
 
 <canvas id="game"></canvas>
 
-<script src="fish-data.js?v=4"></script>
-<script src="game.js?v=10"></script>
+<script src="fish-data.js?v=6"></script>
+<script src="game.js?v=14"></script>
 </body>
 </html>
