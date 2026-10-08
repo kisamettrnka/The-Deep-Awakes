@@ -214,8 +214,11 @@ let smokeParticles = []; // New: exhaust smoke particles from boat
 // Phase 3: Engine Lvl 3+ → slow auto-recharge from motor
 // =====================================================================
 const BATTERY_MAX = 100;          // 100 = full
-const BATTERY_DRAIN_RATE = 0.018; // per frame (approx ~5500 frames = ~92s at 60fps)
-const BATTERY_MOTOR_CHARGE_RATE = 0.004; // per frame when engine >= 3
+// Battery runs on real seconds: a full charge lasts ~3 min by day, ~2 min at night
+const BATTERY_DRAIN_PER_SEC = 0.55;
+const BATTERY_MOTOR_CHARGE_PER_SEC = 0.35; // engine level 3+, while sailing
+const RECHARGE_KIT_COST = 90;
+const RECHARGE_KIT_USES = 3;
 let battery = BATTERY_MAX;        // current battery %
 let batteryRechargeKitOwned = false; // bought at oil rig?
 let batteryRechargesLeft = 0;     // number of recharges left (max 3 after purchase)
@@ -256,6 +259,18 @@ const player = {
 
 let keys = {};
 let fish = [];
+const shoals = [];
+const jellies = [];
+const watchers = [];
+let boatVx = 0;
+let lastWildlifePX = null;
+let wildFishing = false;
+
+// Headlight: the player can switch it off (L) to save the battery
+let headlightOn = true;
+let headlight = { on: true, pct: 1, flicker: 1, dead: false, strength: 1, halfW: 140, r: 110, g: 220, b: 170 };
+let batteryDeadWarned = false;
+let gameWon = false;
 let seabedFeatures = [];
 let sparkles = [];
 
@@ -286,17 +301,7 @@ function hash(n) {
 }
 
 function seedWorld() {
-  fish.length = 0;
-  for (let i = 0; i < 60; i++) {
-    fish.push({
-      wx: Math.random() * worldWidth - worldWidth / 2,
-      depth: 60 + Math.random() * 340,
-      size: 6 + Math.random() * 10,
-      phase: Math.random() * Math.PI * 2,
-      speed: 0.3 + Math.random() * 0.8,
-      hue: 0.5 + Math.random() * 0.2
-    });
-  }
+  seedWildlife();
 
   seabedFeatures.length = 0;
   for (let wx = -worldWidth / 2; wx < worldWidth / 2; wx += 120) {
@@ -384,7 +389,17 @@ function isNeedleInGreen(theta) {
 }
 
 function syncRelicsHud() {
-  if (relicsEl) relicsEl.textContent = `${Math.min(relicsFound, 6)} / 6`;
+  const questEl = document.getElementById("quest");
+  if (questEl && questEl.firstChild && questEl.firstChild.nodeType === 3) {
+    questEl.firstChild.nodeValue = relicsFound >= 7 ? "Kletba je zlomena " : "Seber všechny relikvie ";
+  }
+  if (relicsEl) relicsEl.textContent = relicsFound >= 7 ? "✓" : `${Math.min(relicsFound, 6)} / 6`;
+}
+
+// Danger always stays within 0–12 (the bar and the game-over check rely on it)
+function addDanger(amount) {
+  danger = Math.max(0, Math.min(12, danger + amount));
+  if (dangerUI) dangerUI.innerText = Math.round(danger);
 }
 
 function getDetektorSpotNearPlayer() {
@@ -1380,6 +1395,7 @@ function tryStartFishing() {
   escapeCapture = null;
   resetCatchGauge();
   updateFishingInfoPanel();
+  playCast();
 
   if (fishingUI) {
     fishingUI.classList.remove("hidden");
@@ -1402,6 +1418,7 @@ function tryFishingHit() {
     catchProgress += 1 / fishingParams.hitsToLand;
     flashFishingFeedback(true);
     fishingHitPulse = 1;
+    playHit();
     
     currentFishingZones = generateFishingGreenZones();
     initFishingRingSvg();
@@ -1413,6 +1430,7 @@ function tryFishingHit() {
     redStreak++;
     flashFishingFeedback(false);
     fishingMissPulse = 1;
+    playMiss();
     if (catchProgress > 0) {
       catchProgress = Math.max(0, catchProgress - fishingParams.missSlip / fishingParams.hitsToLand);
     }
@@ -1448,6 +1466,7 @@ function endFishingSuccess() {
   }
 
   const caught = hookedFish || rollHookedFish();
+  playCatch();
 
   // Add to inventory
   inventory.push(caught);
@@ -1473,8 +1492,7 @@ function endFishingSuccess() {
     
     // Aberrant fish increases danger level immediately!
     if (caught.rarity === "aberrant") {
-      danger += 2;
-      if (dangerUI) dangerUI.innerText = Math.round(danger);
+      addDanger(2);
       triggerDialogue("Šílenství", "Něco na té rybě není v pořádku. Ty oči... ten sliz... cítíš, jak ti z toho pohledu třeští hlava.");
     }
 
@@ -1491,6 +1509,7 @@ function endFishingFail() {
   // Fresh splash where the floats were, a small jolt, then the panel closes after the fish is gone
   boatRods.forEach((r) => { r.landedAt = fishingEscapeAt; });
   triggerScreenShake(4);
+  playSnap();
   window.setTimeout(() => {
     fishingLocked = false;
     redStreak = 0;
@@ -1535,7 +1554,10 @@ function isRechargeNeedleInGreen(theta) {
 
 function tryStartRechargeMinigame() {
   if (rechargeMinigameActive || fishingMode || detektorMode) return;
-  if (!batteryRechargeKitOwned || batteryRechargesLeft <= 0) return;
+  if (!batteryRechargeKitOwned || batteryRechargesLeft <= 0) {
+    triggerDialogue("Baterie", "Nemáš dobíjecí sadu. Koupíš ji na ropné věži — nebo zakotvi v přístavu, tam se baterie dobije sama.");
+    return;
+  }
   if (battery >= BATTERY_MAX - 5) {
     triggerDialogue("Baterie", "Baterie je již plná.");
     return;
@@ -1595,13 +1617,16 @@ function tryRechargeHit() {
   if (isRechargeNeedleInGreen(th)) {
     rechargeRedStreak = 0;
     rechargeMinigameProgress++;
-    
-    // Flash ring
+    playHit();
+
+    // Flash ring (Web Animations restart reliably; class toggling doesn't on SVG)
     const flashRing = document.getElementById("recharge-flash-ring");
-    if (flashRing) {
-      flashRing.classList.remove("flash-anim");
-      void flashRing.offsetWidth;
-      flashRing.classList.add("flash-anim");
+    if (flashRing && flashRing.animate) {
+      flashRing.getAnimations().forEach((a) => a.cancel());
+      flashRing.animate(
+        [{ opacity: 0.95, transform: "scale(1)" }, { opacity: 0, transform: "scale(1.25)" }],
+        { duration: 420, easing: "ease-out" }
+      );
     }
     
     // Regenerate zones
@@ -1617,6 +1642,7 @@ function tryRechargeHit() {
     }
   } else {
     rechargeRedStreak++;
+    playMiss();
     const redEl = document.getElementById("recharge-red-count");
     const hintEl = document.getElementById("recharge-red-hint");
     if (hintEl) hintEl.classList.remove("hidden");
@@ -1768,12 +1794,14 @@ function tryDetektorHit() {
     hideDetektorRedHint();
     detektorProgress += 1;
     updateDetektorExtractBar();
+    playPing();
     if (detektorProgress >= DETEKTOR_HITS_TO_RELIC) {
       endDetektorSuccess();
     }
   } else {
     detektorRedStreak++;
     showDetektorRedHint();
+    playMiss();
     if (detektorRedStreak >= 3) {
       endDetektorFail();
     }
@@ -1802,6 +1830,7 @@ function endDetektorSuccess() {
   }
   
   triggerScreenShake(15);
+  playCatch();
   
   window.setTimeout(() => {
     if (spot) spot.taken = true;
@@ -1811,8 +1840,7 @@ function endDetektorSuccess() {
     syncRelicsHud();
     
     // Increase danger! Relics are cursed!
-    danger += 3;
-    if (dangerUI) dangerUI.innerText = Math.round(danger);
+    addDanger(3);
 
     detektorLocked = false;
     detektorRedStreak = 0;
@@ -1853,6 +1881,12 @@ function updateDetektorHudVisuals() {
 window.addEventListener("keydown", (e) => {
   const key = e.key.toLowerCase();
   keys[key] = true;
+  initSound(); // browsers only allow audio after a user gesture
+
+  if (key === "m" && !e.repeat) {
+    toggleSound();
+    return;
+  }
 
   if (gameOver) {
     if (e.code === "Space" || e.key === " ") {
@@ -1863,20 +1897,28 @@ window.addEventListener("keydown", (e) => {
   }
 
   if (dialogueActive) {
-    if (e.code === "Space" || e.key === " " || e.key === "enter") {
+    if (e.code === "Space" || e.key === " " || key === "enter") {
       e.preventDefault();
       skipTypewriter();
     }
     return;
   }
 
-  if (e.key === "i" || e.key === "I") {
+  const inMinigame = fishingMode || detektorMode || rechargeMinigameActive;
+
+  if (key === "i") {
     e.preventDefault();
     toggleInventory();
     return;
   }
 
-  if (e.key === "e" || e.key === "E") {
+  if (key === "l" && !e.repeat) {
+    if (!dockActive) toggleHeadlight();
+    return;
+  }
+
+  if (key === "e") {
+    if (inMinigame) return;
     if (dockActive) {
       handleEKeyInMenu();
     } else {
@@ -1894,31 +1936,35 @@ window.addEventListener("keydown", (e) => {
 
   if (e.code === "Space" || e.key === " ") {
     e.preventDefault();
-    if (!e.repeat) {
+    if (!e.repeat && !dockActive) {
       if (rechargeMinigameActive) tryRechargeHit();
       else if (fishingMode) tryFishingHit();
       else if (detektorMode) tryDetektorHit();
       else tryStartFishing();
     }
+    return;
   }
 
-  if ((key === "f") && !e.repeat) {
-    if (!fishingMode && !detektorMode && !rechargeMinigameActive) {
-      tryStartDetektor();
-    }
+  if (key === "f" && !e.repeat && !dockActive && !inMinigame) {
+    tryStartDetektor();
   }
-  
-  // R = start recharge minigame (if kit owned and battery not full)
-  if ((key === "r") && !e.repeat) {
-    if (!fishingMode && !detektorMode && !dockActive) {
-      tryStartRechargeMinigame();
-    }
+
+  // R = emergency recharge minigame (needs the kit from the oil rig)
+  if (key === "r" && !e.repeat && !dockActive && !inMinigame) {
+    tryStartRechargeMinigame();
   }
 });
 
 window.addEventListener("keyup", (e) => {
   keys[e.key.toLowerCase()] = false;
 });
+
+// Alt-tab or clicking away never delivers keyup — release everything so the boat stops
+window.addEventListener("blur", () => {
+  Object.keys(keys).forEach((k) => { keys[k] = false; });
+});
+
+window.addEventListener("pointerdown", () => initSound());
 
 let lastDangerTick = 0;
 
@@ -1929,10 +1975,13 @@ let dangerThresh9 = false;
 let reefWarnedEntry = false;
 
 function update() {
-  if (fishingMode || detektorMode || dockActive || dialogueActive || gameOver) return;
+  if (fishingMode || detektorMode || rechargeMinigameActive || dockActive || dialogueActive || gameOver) return;
 
-  if (keys["a"] || keys["arrowleft"]) player.x -= player.speed;
-  if (keys["d"] || keys["arrowright"]) player.x += player.speed;
+  // player.speed is tuned in pixels per 60 Hz frame; scale by real time so
+  // high-refresh monitors don't sail faster
+  const f60 = frameDt * 60;
+  if (keys["a"] || keys["arrowleft"]) player.x -= player.speed * f60;
+  if (keys["d"] || keys["arrowright"]) player.x += player.speed * f60;
 
   player.x = Math.max(-worldWidth / 2 + 100, Math.min(worldWidth / 2 - 100, player.x));
 
@@ -1943,11 +1992,6 @@ function update() {
     gameTime -= 24;
     dayNum++;
   }
-
-  fish.forEach((f) => {
-    f.phase += 0.02 * f.speed;
-    f.wx += Math.sin(f.phase) * 0.4;
-  });
 
   // Reef zone entry warning
   const inReef = isInReefZone(player.x);
@@ -1978,6 +2022,9 @@ function update() {
     const aberrantCount = inventory.filter(f => f.rarity === "aberrant").length;
     dangerIncrease += aberrantCount * 0.12;
 
+    // Once the curse is broken the sea is gentler
+    if (gameWon) dangerIncrease *= 0.5;
+
     // Scale down by hull upgrade resistance
     const hullResist = upgrades.hull;
     danger += dangerIncrease / hullResist;
@@ -1997,8 +2044,9 @@ function update() {
   const bob = boatBob();
   const exhaustWx = player.x - 22;
   const exhaustWy = getSurfaceY() - 8 + bob - 68;
-  
-  if ((keys["a"] || keys["arrowleft"] || keys["d"] || keys["arrowright"]) && Math.random() < 0.18) {
+  const isMoving = keys["a"] || keys["arrowleft"] || keys["d"] || keys["arrowright"];
+
+  if (isMoving && Math.random() < 0.18 * f60) {
     smokeParticles.push({
       wx: exhaustWx,
       wy: exhaustWy,
@@ -2007,7 +2055,7 @@ function update() {
       r: 2 + Math.random() * 2,
       alpha: 0.5
     });
-  } else if (Math.random() < 0.05) { // idle smoke
+  } else if (Math.random() < 0.05 * f60) { // idle smoke
     smokeParticles.push({
       wx: exhaustWx,
       wy: exhaustWy,
@@ -2017,39 +2065,39 @@ function update() {
       alpha: 0.35
     });
   }
-  
+
   for (let i = smokeParticles.length - 1; i >= 0; i--) {
     const p = smokeParticles[i];
-    p.wx += p.vx;
-    p.wy += p.vy;
-    p.alpha -= 0.008;
-    p.r += 0.06;
+    p.wx += p.vx * f60;
+    p.wy += p.vy * f60;
+    p.alpha -= 0.008 * f60;
+    p.r += 0.06 * f60;
     if (p.alpha <= 0) {
       smokeParticles.splice(i, 1);
     }
   }
 
-  // --- BATTERY SYSTEM ---
-  // Battery drains only when on sea (not docked)
-  const isMoving = keys["a"] || keys["arrowleft"] || keys["d"] || keys["arrowright"];
-  
-  // Auto-charge from motor at engine level 3+
-  if (upgrades.engine >= 3 && battery < BATTERY_MAX) {
-    battery = Math.min(BATTERY_MAX, battery + BATTERY_MOTOR_CHARGE_RATE);
+  // --- BATTERY SYSTEM --- (real seconds; recharges fully in the harbour)
+  if (upgrades.engine >= 3 && isMoving && battery < BATTERY_MAX) {
+    const charge = BATTERY_MOTOR_CHARGE_PER_SEC * (1 + (upgrades.engine - 3) * 0.6);
+    battery = Math.min(BATTERY_MAX, battery + charge * frameDt);
   }
-  
-  // Drain battery — faster at night
-  const batteryDrain = BATTERY_DRAIN_RATE * (getDaylightFactor() < 0.3 ? 1.5 : 1.0);
-  if (!rechargeMinigameActive) {
-    battery = Math.max(0, battery - batteryDrain);
+  if (headlightOn) {
+    const drain = BATTERY_DRAIN_PER_SEC * (getDaylightFactor() < 0.3 ? 1.5 : 1.0);
+    battery = Math.max(0, battery - drain * frameDt);
   }
-  
-  // Danger boost when battery dead at night
-  const daylight2 = getDaylightFactor();
-  if (battery <= 0 && daylight2 < 0.25) {
-    danger = Math.min(12, danger + 0.003);
+
+  if (battery <= 0 && !batteryDeadWarned) {
+    batteryDeadWarned = true;
+    triggerDialogue("Baterie", "Světlo zablikalo a zhaslo. Baterie je vybitá — vrať se do přístavu, než tě pohltí tma.");
   }
-  
+  if (battery > 10) batteryDeadWarned = false;
+
+  // Sitting in the dark at night wears on the mind
+  if (battery <= 0 && getDaylightFactor() < 0.25) {
+    danger = Math.min(12, danger + 0.18 * frameDt);
+  }
+
   // Battery low flash warning
   if (battery < 20) {
     batteryLowFlash = Math.sin(performance.now() * 0.008) * 0.5 + 0.5;
@@ -2986,6 +3034,10 @@ function drawCoralReef(surfaceY) {
 
     const coralType = Math.floor(seed * 3); // 0=branch, 1=fan, 2=dome
 
+    // Reef corals glow on their own, so they show through the darkness
+    const glowRgb = { 0: "255,70,90", 20: "255,130,60", 300: "230,70,220", 160: "60,240,190", 40: "255,190,70" }[hue];
+    addGlow(sx, baseY - 26, 80, 0.32 + 0.12 * Math.sin(t * 1.3 + wx * 0.01), glowRgb);
+
     if (coralType === 0) {
       // Branching coral
       const drawBranch = (x, y, angle, len, depth) => {
@@ -3243,8 +3295,22 @@ function drawWaterSurface(surfaceY) {
   planeGrad.addColorStop(0, `rgb(${Math.round(rBase * 0.3)}, ${Math.round(gBase * 0.35)}, ${Math.round(bBase * 0.4)})`);
   planeGrad.addColorStop(0.5, `rgb(${Math.round(rBase * 0.6)}, ${Math.round(gBase * 0.7)}, ${Math.round(bBase * 0.75)})`);
   planeGrad.addColorStop(1, `rgb(${rBase}, ${gBase}, ${bBase})`);
+  // Translucent sheen only — the depths below stay dark
+  ctx.globalAlpha = 0.3 + daylight * 0.25;
   ctx.fillStyle = planeGrad;
   ctx.fillRect(0, surfaceY, canvas.width, waterH);
+  ctx.globalAlpha = 1;
+
+  // Bright meniscus where air meets water
+  ctx.strokeStyle = `rgba(${Math.round(150 + daylight * 80)},${Math.round(175 + daylight * 65)},${Math.round(190 + daylight * 50)},${0.22 + daylight * 0.25 + lightningFlash * 0.4})`;
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  for (let x = -10; x <= canvas.width + 10; x += 12) {
+    const y = surfaceY + Math.sin((x + camera.x * 0.9) * 0.035 + t * 1.6) * 1.2;
+    if (x === -10) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
   
   // Draw 3D perspective wave layers (8 layers)
   const layers = 8;
@@ -3367,22 +3433,11 @@ function drawBubbles(surfaceY) {
 }
 
 function drawUnderwater(surfaceY) {
-  const daylight = getDaylightFactor();
-  
-  // Daylight water: green-teal. Night water: dark murky blue-black
-  const r0 = Math.round(2 + daylight * 16);
-  const g0 = Math.round(6 + daylight * 36);
-  const b0 = Math.round(4 + daylight * 30);
-  
-  const r1 = Math.round(0 + daylight * 4);
-  const g1 = Math.round(2 + daylight * 10);
-  const b1 = Math.round(1 + daylight * 8);
-  
+  // How the water looks where light reaches it — the darkness pass decides what is seen
   const g = ctx.createLinearGradient(0, surfaceY, 0, canvas.height);
-  g.addColorStop(0, `rgb(${r0}, ${g0}, ${b0})`);
-  g.addColorStop(0.5, `rgb(${r1}, ${g1}, ${b1})`);
-  g.addColorStop(1, "#000000");
-  
+  g.addColorStop(0, "#14403e");
+  g.addColorStop(0.45, "#0b2a2c");
+  g.addColorStop(1, "#04100f");
   ctx.fillStyle = g;
   ctx.fillRect(0, surfaceY, canvas.width, canvas.height - surfaceY);
 }
@@ -3455,148 +3510,670 @@ function drawSeabed(surfaceY) {
   }
 }
 
-function drawLightCone(screenBoatX, keelY, surfaceY) {
-  const depth = canvas.height - surfaceY;
+// =====================================================================
+// UNDERWATER LIGHTING — the depths are black. The scene below the surface
+// is drawn as if lit, then a darkness layer covers it, with holes cut where
+// the boat's headlight and a few living lights (jellyfish, corals) reach.
+// =====================================================================
 
-  // === BATTERY FACTOR ===
-  // batteryPct: 0..1  (0 = dead, 1 = full)
-  const batteryPct = Math.max(0, battery / BATTERY_MAX);
-  
-  // When very low (< 20%), add flickering
-  let flickerMult = 1.0;
-  if (batteryPct < 0.2 && batteryPct > 0) {
-    const flicker = Math.sin(performance.now() * 0.025 + Math.random() * 0.5) * 0.5 + 0.5;
-    flickerMult = 0.15 + flicker * 0.5; // 0.15 - 0.65 range
-  } else if (batteryPct <= 0) {
-    // Dead battery - only tiny emergency red blink
-    const emergencyBlink = Math.sin(performance.now() * 0.006) > 0.7 ? 0.06 : 0;
-    const halfWdead = 18;
-    ctx.save();
-    ctx.globalCompositeOperation = "screen";
-    const emergG = ctx.createRadialGradient(screenBoatX + 78, keelY - 11, 1, screenBoatX + 78, keelY - 11, halfWdead);
-    emergG.addColorStop(0, `rgba(255,60,60,${emergencyBlink})`);
-    emergG.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.fillStyle = emergG;
-    ctx.beginPath();
-    ctx.arc(screenBoatX + 78, keelY - 11, halfWdead, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-    return; // No main cone when dead
+const LIGHT_PAD = 40;                 // extra margin so screen shake never shows an edge
+const lightCanvas = document.createElement("canvas");
+const lightCtx = lightCanvas.getContext("2d");
+const frameGlows = [];                // light sources registered while drawing this frame
+
+function addGlow(x, y, r, strength, color) {
+  frameGlows.push({ x, y, r, strength, color });
+}
+
+function computeHeadlight() {
+  const pct = Math.max(0, battery / BATTERY_MAX);
+  const lightsFactor = 1 + (upgrades.lights - 1) * 0.28;
+  let flicker = 1;
+  if (pct > 0 && pct < 0.2) {
+    const f = Math.sin(performance.now() * 0.025 + Math.random() * 0.5) * 0.5 + 0.5;
+    flicker = 0.15 + f * 0.5;
+  }
+  const on = headlightOn && pct > 0;
+  return {
+    on,
+    pct,
+    flicker,
+    dead: pct <= 0,
+    // Full strength until the battery runs low, then it fades out
+    strength: on ? Math.min(1, 0.35 + pct * 1.3) * flicker : 0,
+    halfW: (140 + Math.sin(performance.now() * 0.001) * 10) * lightsFactor * (0.55 + 0.45 * Math.min(1, pct * 2)),
+    r: Math.round(110 + (1 - pct) * 140),
+    g: Math.round(200 + pct * 20),
+    b: Math.round(110 + pct * 60)
+  };
+}
+
+function toggleHeadlight() {
+  headlightOn = !headlightOn;
+  playClick();
+}
+
+function cutLight(g, x, y, r, a) {
+  const rg = g.createRadialGradient(x, y, 0, x, y, r);
+  rg.addColorStop(0, `rgba(0,0,0,${a})`);
+  rg.addColorStop(1, "rgba(0,0,0,0)");
+  g.fillStyle = rg;
+  g.fillRect(x - r, y - r, r * 2, r * 2);
+}
+
+function drawUnderwaterDarkness(surfaceY, boatX, keelY) {
+  const W = canvas.width + LIGHT_PAD * 2;
+  const H = canvas.height + LIGHT_PAD * 2;
+  if (lightCanvas.width !== W || lightCanvas.height !== H) {
+    lightCanvas.width = W;
+    lightCanvas.height = H;
+  }
+  const g = lightCtx;
+  g.setTransform(1, 0, 0, 1, LIGHT_PAD, LIGHT_PAD);
+  g.globalCompositeOperation = "source-over";
+  g.clearRect(-LIGHT_PAD, -LIGHT_PAD, W, H);
+
+  const day = getDaylightFactor();
+  const lift = 1 - lightningFlash * 0.75;          // lightning shows the depths for a heartbeat
+  const surfA = (0.9 - day * 0.45) * lift;         // daylight only gets a little way down
+  const deepA = 0.985 * lift;
+  const reach = 40 + day * 110;
+  const top = surfaceY - 1;
+  const left = -LIGHT_PAD, width = W;
+
+  const amb = g.createLinearGradient(0, top, 0, top + reach);
+  amb.addColorStop(0, `rgba(1,5,8,${surfA})`);
+  amb.addColorStop(1, `rgba(1,4,7,${deepA})`);
+  g.fillStyle = amb;
+  g.fillRect(left, top, width, reach);
+  g.fillStyle = `rgba(1,4,7,${deepA})`;
+  g.fillRect(left, top + reach, width, H);
+
+  g.globalCompositeOperation = "destination-out";
+  const hl = headlight;
+  const bottom = canvas.height + 10;
+  if (hl.on && hl.strength > 0.01) {
+    // Nested cones give the beam a soft edge and a brighter core
+    const layers = 7;
+    for (let i = 0; i < layers; i++) {
+      const k = i / (layers - 1);                  // 0 = outer halo, 1 = core
+      const w = hl.halfW * (1.4 - 0.8 * k);
+      const topW = 10 + 14 * (1 - k);
+      const a = 0.24 * hl.strength;
+      const grad = g.createLinearGradient(0, keelY, 0, bottom);
+      grad.addColorStop(0, `rgba(0,0,0,${a})`);
+      grad.addColorStop(0.5, `rgba(0,0,0,${a * 0.8})`);
+      grad.addColorStop(1, `rgba(0,0,0,${a * 0.4})`);
+      g.fillStyle = grad;
+      g.beginPath();
+      g.moveTo(boatX - topW, keelY);
+      g.lineTo(boatX - w, bottom);
+      g.lineTo(boatX + w, bottom);
+      g.lineTo(boatX + topW, keelY);
+      g.closePath();
+      g.fill();
+    }
+    // Spill around the hull, and the pool where the beam meets the seabed
+    cutLight(g, boatX, keelY + 24, 120, 0.45 * hl.strength);
+    cutLight(g, boatX, canvas.height - 45, hl.halfW * 1.1, 0.25 * hl.strength);
+  }
+  // The deck lantern spills a little warm light onto the water around the boat
+  cutLight(g, boatX + 60, surfaceY + 6, 85, 0.3);
+  frameGlows.forEach((gl) => cutLight(g, gl.x, gl.y, gl.r, gl.strength));
+
+  g.globalCompositeOperation = "source-over";
+  ctx.drawImage(lightCanvas, -LIGHT_PAD, -LIGHT_PAD);
+}
+
+// Coloured bloom for things that glow on their own, drawn over the darkness
+function drawEmissiveGlows() {
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  frameGlows.forEach((gl) => {
+    if (!gl.color) return;
+    const r = gl.r * 0.7;
+    const rg = ctx.createRadialGradient(gl.x, gl.y, 0, gl.x, gl.y, r);
+    rg.addColorStop(0, `rgba(${gl.color},${gl.strength * 0.35})`);
+    rg.addColorStop(1, `rgba(${gl.color},0)`);
+    ctx.fillStyle = rg;
+    ctx.fillRect(gl.x - r, gl.y - r, r * 2, r * 2);
+  });
+  ctx.restore();
+}
+
+// The headlight beam itself: a haze of light, slow shafts and the lamp bloom
+function drawLightCone(screenBoatX, keelY, surfaceY) {
+  const hl = headlight;
+  const H = canvas.height;
+
+  if (!hl.on) {
+    // Dead battery: only a weak red emergency blink at the bow
+    if (hl.dead && headlightOn) {
+      const blink = Math.sin(performance.now() * 0.006) > 0.7 ? 0.5 : 0;
+      if (blink > 0) {
+        ctx.save();
+        ctx.globalCompositeOperation = "screen";
+        const eg = ctx.createRadialGradient(screenBoatX + 78, keelY - 11, 1, screenBoatX + 78, keelY - 11, 18);
+        eg.addColorStop(0, `rgba(255,60,60,${blink})`);
+        eg.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = eg;
+        ctx.fillRect(screenBoatX + 60, keelY - 29, 36, 36);
+        ctx.restore();
+      }
+    }
+    return;
   }
 
-  // Lights upgrade multiplies cone width
-  const lightsFactor = 1 + (upgrades.lights - 1) * 0.28;
-  const halfW = (140 + Math.sin(performance.now() * 0.001) * 10) * batteryPct * lightsFactor * flickerMult;
-  
-  // Color shifts to warmer amber when low on battery
-  const greenComponent = Math.round(200 + batteryPct * 20);
-  const redComponent   = Math.round(110 + (1 - batteryPct) * 140);
-  const blueComponent  = Math.round(110 + batteryPct * 60);
-  const coneAlpha0 = 0.35 * batteryPct * flickerMult;
-  const coneAlpha1 = 0.16 * batteryPct * flickerMult;
-  const coneAlpha2 = 0.07 * batteryPct * flickerMult;
-
-  // Main cone
-  const cone = ctx.createLinearGradient(screenBoatX, keelY, screenBoatX, canvas.height - 15);
-  cone.addColorStop(0,   `rgba(${redComponent},${greenComponent},${blueComponent},${coneAlpha0})`);
-  cone.addColorStop(0.2, `rgba(${Math.round(redComponent*0.7)},${Math.round(greenComponent*0.85)},${blueComponent},${coneAlpha1})`);
-  cone.addColorStop(0.5, `rgba(${Math.round(redComponent*0.5)},${Math.round(greenComponent*0.7)},${Math.round(blueComponent*0.7)},${coneAlpha2})`);
-  cone.addColorStop(1,   "rgba(20,60,30,0)");
-
+  const s = hl.strength;
+  const { r, g, b } = hl;
+  const t = performance.now() * 0.001;
   ctx.save();
+  ctx.globalCompositeOperation = "screen";
+
+  // Haze inside the beam
+  const cone = ctx.createLinearGradient(0, keelY, 0, H);
+  cone.addColorStop(0, `rgba(${r},${g},${b},${0.17 * s})`);
+  cone.addColorStop(0.35, `rgba(${Math.round(r * 0.6)},${Math.round(g * 0.8)},${b},${0.07 * s})`);
+  cone.addColorStop(1, "rgba(20,60,40,0)");
+  ctx.fillStyle = cone;
   ctx.beginPath();
   ctx.moveTo(screenBoatX - 14, keelY + 4);
-  ctx.lineTo(screenBoatX - halfW, canvas.height - 25);
-  ctx.lineTo(screenBoatX + halfW, canvas.height - 25);
+  ctx.lineTo(screenBoatX - hl.halfW, H - 25);
+  ctx.lineTo(screenBoatX + hl.halfW, H - 25);
   ctx.lineTo(screenBoatX + 14, keelY + 4);
   ctx.closePath();
-  ctx.fillStyle = cone;
   ctx.fill();
-  ctx.restore();
 
-  // Soft volumetric glow (scaled by battery)
-  if (batteryPct > 0.05) {
-    ctx.save();
-    ctx.globalCompositeOperation = "screen";
-    const soft = ctx.createRadialGradient(
-      screenBoatX, keelY + depth * 0.35, 0,
-      screenBoatX, keelY + depth * 0.35, halfW * 1.1
-    );
-    soft.addColorStop(0, `rgba(${redComponent},${greenComponent},${blueComponent},${0.15 * batteryPct * flickerMult})`);
-    soft.addColorStop(0.5, `rgba(60,150,100,${0.05 * batteryPct * flickerMult})`);
-    soft.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.fillStyle = soft;
-    ctx.fillRect(screenBoatX - halfW * 1.3, keelY, halfW * 2.6, depth);
-    ctx.restore();
+  // Shafts of light drifting slowly inside the beam
+  for (let i = 0; i < 6; i++) {
+    const u = (i + 0.5) / 6 - 0.5;
+    const sway = Math.sin(t * (0.3 + i * 0.07) + i * 1.7) * 0.12;
+    const spread = (u + sway) * 2 * hl.halfW * 0.85;
+    const w = 6 + hash(i * 13) * 14;
+    const a = (0.04 + 0.03 * Math.sin(t * 0.7 + i * 2.3)) * s;
+    const sg = ctx.createLinearGradient(0, keelY, 0, H);
+    sg.addColorStop(0, `rgba(${r},${g},${b},${a})`);
+    sg.addColorStop(1, `rgba(${r},${g},${b},0)`);
+    ctx.fillStyle = sg;
+    ctx.beginPath();
+    ctx.moveTo(screenBoatX - 3, keelY + 4);
+    ctx.lineTo(screenBoatX + spread - w, H - 25);
+    ctx.lineTo(screenBoatX + spread + w, H - 25);
+    ctx.lineTo(screenBoatX + 3, keelY + 4);
+    ctx.closePath();
+    ctx.fill();
   }
 
-  // Caustic shimmer on seabed (only when battery > 30%)
-  if (batteryPct > 0.3) {
-    const t = performance.now() * 0.0015;
-    ctx.save();
-    ctx.globalCompositeOperation = "screen";
-    const causticCount = Math.round(8 * batteryPct);
-    for (let i = 0; i < causticCount; i++) {
-      const cx = screenBoatX + (i - 3.5) * 35 + Math.sin(t + i * 1.5) * 20;
-      const cy = canvas.height - 50 - hash(i * 17) * 30;
-      const cr = 12 + Math.sin(t * 1.2 + i * 2.1) * 6;
-      const ca = (0.04 + Math.sin(t * 0.8 + i * 1.8) * 0.02) * batteryPct * flickerMult;
-      ctx.fillStyle = `rgba(120,220,160,${ca})`;
-      ctx.beginPath();
-      ctx.ellipse(cx, cy, cr * 1.5, cr * 0.4, Math.sin(t + i) * 0.4, 0, Math.PI * 2);
-      ctx.fill();
+  // Caustic shimmer where the beam lands on the seabed
+  const causticCount = Math.round(8 * Math.min(1, s * 1.2));
+  for (let i = 0; i < causticCount; i++) {
+    const cx = screenBoatX + (i - 3.5) * 35 + Math.sin(t * 1.5 + i * 1.5) * 20;
+    const cy = H - 50 - hash(i * 17) * 30;
+    const cr = 12 + Math.sin(t * 1.8 + i * 2.1) * 6;
+    ctx.fillStyle = `rgba(120,220,160,${(0.05 + Math.sin(t * 1.2 + i * 1.8) * 0.025) * s})`;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, cr * 1.5, cr * 0.4, Math.sin(t * 1.5 + i) * 0.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Bloom on the lamp under the hull and on the bow fixture
+  const lamp = ctx.createRadialGradient(screenBoatX, keelY + 6, 0, screenBoatX, keelY + 6, 46);
+  lamp.addColorStop(0, `rgba(${r + 40},${g + 20},${b + 30},${0.35 * s})`);
+  lamp.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = lamp;
+  ctx.fillRect(screenBoatX - 46, keelY - 40, 92, 92);
+  const head = ctx.createRadialGradient(screenBoatX + 78, keelY - 11, 1, screenBoatX + 78, keelY - 11, 22);
+  head.addColorStop(0, `rgba(${Math.min(255, r + 60)},${Math.min(255, g + 30)},200,${0.55 * s})`);
+  head.addColorStop(1, "rgba(255,255,200,0)");
+  ctx.fillStyle = head;
+  ctx.fillRect(screenBoatX + 56, keelY - 33, 44, 44);
+  ctx.restore();
+}
+
+// --- Marine snow: drifting specks that only show up inside the light ---
+
+const marineSnow = [];
+for (let i = 0; i < 160; i++) {
+  marineSnow.push({
+    u: Math.random(),
+    v: Math.random(),
+    z: 0.4 + Math.random() * 0.8,       // depth in the volume: nearer specks move faster
+    ph: Math.random() * Math.PI * 2,
+    s: 0.8 + Math.random() * 1.4
+  });
+}
+
+function drawMarineSnow(surfaceY) {
+  const t = performance.now() * 0.001;
+  const W = canvas.width + 40;
+  const waterH = canvas.height - surfaceY - 20;
+  ctx.save();
+  marineSnow.forEach((m) => {
+    let x = (m.u * W - camera.x * m.z * 0.35 + Math.sin(t * 0.3 + m.ph) * 8) % W;
+    if (x < 0) x += W;
+    const y = (m.v + t * 0.008 * m.z) % 1;
+    ctx.fillStyle = `rgba(205,228,218,${0.25 + 0.45 * (m.z - 0.4)})`;
+    ctx.fillRect(x - 20, surfaceY + 10 + y * waterH, m.s, m.s);
+  });
+  ctx.restore();
+}
+
+// --- Bioluminescent wake: at night the sea sparkles where the hull churns it ---
+
+const bioWake = [];
+
+function updateBioWake(dt) {
+  const night = 1 - getDaylightFactor();
+  if (night > 0.55 && Math.abs(boatVx) > 40 && !dockActive && bioWake.length < 260) {
+    const n = Math.floor(dt * 45 + Math.random());
+    const back = -Math.sign(boatVx);
+    for (let k = 0; k < n; k++) {
+      bioWake.push({
+        wx: player.x + back * wlRand(55, 110),
+        depth: wlRand(3, 28),
+        vx: back * wlRand(5, 25),
+        life: 0,
+        max: wlRand(1.2, 2.4),
+        r: wlRand(1, 2.4)
+      });
     }
-    ctx.restore();
   }
-  
-  // Headlight fixture glow on bow (visible even at low battery — it's the source)
-  const headGlowAlpha = 0.55 * batteryPct * flickerMult;
-  const headGlow = ctx.createRadialGradient(screenBoatX + 78, keelY - 11, 1, screenBoatX + 78, keelY - 11, 14 + batteryPct * 6);
-  headGlow.addColorStop(0, `rgba(${redComponent + 60},${greenComponent + 30},200,${headGlowAlpha})`);
-  headGlow.addColorStop(1, "rgba(255,255,200,0)");
+  for (let i = bioWake.length - 1; i >= 0; i--) {
+    const p = bioWake[i];
+    p.life += dt;
+    p.wx += p.vx * dt;
+    p.vx *= Math.pow(0.4, dt);
+    if (p.life > p.max) bioWake.splice(i, 1);
+  }
+}
+
+function drawBioWake(surfaceY) {
+  if (!bioWake.length) return;
   ctx.save();
-  ctx.fillStyle = headGlow;
-  ctx.beginPath();
-  ctx.arc(screenBoatX + 78, keelY - 11, 20 + batteryPct * 6, 0, Math.PI * 2);
-  ctx.fill();
+  ctx.globalCompositeOperation = "screen";
+  bioWake.forEach((p) => {
+    const u = p.life / p.max;
+    const a = (u < 0.15 ? u / 0.15 : 1 - (u - 0.15) / 0.85) * 0.7;
+    const x = p.wx - camera.x;
+    const y = surfaceY + p.depth;
+    const rr = p.r * 4;
+    const gr = ctx.createRadialGradient(x, y, 0, x, y, rr);
+    gr.addColorStop(0, `rgba(130,240,255,${a})`);
+    gr.addColorStop(1, "rgba(40,160,255,0)");
+    ctx.fillStyle = gr;
+    ctx.fillRect(x - rr, y - rr, rr * 2, rr * 2);
+  });
   ctx.restore();
 }
 
+// --- Rain landing on the sea ---
 
-function drawFishEntity(f, surfaceY) {
+const rainRipples = [];
 
-  const worldScreenX = f.wx - camera.x;
-  if (worldScreenX < -40 || worldScreenX > canvas.width + 40) return;
-
-  const waterCol = canvas.height - surfaceY - 28;
-  const fy = surfaceY + (f.depth / 400) * waterCol * 0.92;
-  if (fy > canvas.height - 10) return;
-
-  const ang = Math.sin(f.phase) * 0.3;
+function drawRainRipples(surfaceY) {
+  if (!rainRipples.length) return;
   ctx.save();
-  ctx.translate(worldScreenX, fy);
-  ctx.rotate(ang);
-  const r = f.size;
-  const body = `hsl(${140 + f.hue * 30}, 28%, ${20 + f.hue * 14}%)`;
-  ctx.fillStyle = body;
-  ctx.beginPath();
-  ctx.ellipse(0, 0, r * 1.2, r * 0.55, 0, 0, Math.PI * 2);
-  ctx.fill();
-  // Eye
-  ctx.fillStyle = "rgba(200,220,200,0.4)";
-  ctx.beginPath();
-  ctx.arc(r * 0.7, -r * 0.1, r * 0.12, 0, Math.PI * 2);
-  ctx.fill();
-  // Tail
-  ctx.fillStyle = "rgba(0,0,0,0.2)";
-  ctx.beginPath();
-  ctx.moveTo(-r * 1.1, 0);
-  ctx.lineTo(-r * 2, -r * 0.5);
-  ctx.lineTo(-r * 2, r * 0.5);
-  ctx.closePath();
-  ctx.fill();
+  ctx.lineWidth = 0.8;
+  rainRipples.forEach((rp) => {
+    const u = rp.t / 0.55;
+    ctx.strokeStyle = `rgba(190,215,235,${(1 - u) * 0.35})`;
+    ctx.beginPath();
+    ctx.ellipse(rp.x, surfaceY + 1.5, 1.5 + u * 9, 0.6 + u * 2, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  });
   ctx.restore();
 }
+
+// --- Oil rig legs below the waterline (the water fill used to hide them) ---
+
+function drawOilRigUnderwater(surfaceY) {
+  const sx = OILRIG_WX - camera.x;
+  if (sx < -300 || sx > canvas.width + 300) return;
+  const H = canvas.height;
+  ctx.save();
+  ctx.translate(sx, 0);
+  const lg = ctx.createLinearGradient(0, surfaceY, 0, H);
+  lg.addColorStop(0, "#2c2926");
+  lg.addColorStop(1, "#121110");
+  ctx.fillStyle = lg;
+  ctx.fillRect(-80, surfaceY, 20, H - surfaceY);
+  ctx.fillRect(60, surfaceY, 20, H - surfaceY);
+
+  // Cross bracing continues down to the seabed
+  ctx.strokeStyle = "#25221f";
+  ctx.lineWidth = 4;
+  for (let y = surfaceY - 80; y < H; y += 60) {
+    if (y + 30 < surfaceY) continue;
+    ctx.beginPath();
+    ctx.moveTo(-60, Math.max(surfaceY, y));
+    ctx.lineTo(60, y + 30);
+    ctx.moveTo(60, Math.max(surfaceY, y));
+    ctx.lineTo(-60, y + 30);
+    ctx.stroke();
+  }
+
+  // Rust streaks and weed growing on the legs
+  [-80, 60].forEach((lx, li) => {
+    for (let k = 0; k < 5; k++) {
+      const ry = surfaceY + 20 + hash(li * 31 + k * 7) * (H - surfaceY - 60);
+      ctx.fillStyle = "rgba(120,62,30,0.28)";
+      ctx.fillRect(lx + 3 + hash(k * 13 + li) * 10, ry, 3, 18 + hash(k * 5) * 30);
+    }
+    ctx.strokeStyle = "rgba(30,60,36,0.8)";
+    ctx.lineWidth = 2;
+    for (let k = 0; k < 4; k++) {
+      const wx = lx + 4 + k * 4;
+      ctx.beginPath();
+      ctx.moveTo(wx, H - 50);
+      ctx.quadraticCurveTo(wx + Math.sin(performance.now() * 0.0015 + k) * 8, H - 80, wx + Math.sin(performance.now() * 0.001 + k) * 5, H - 110 - k * 8);
+      ctx.stroke();
+    }
+  });
+  ctx.restore();
+}
+
+// --- Lightning: storms at night, briefly lighting the sky and the depths ---
+
+const lightning = { next: 10 + Math.random() * 10, t: 99, bolt: null };
+let lightningFlash = 0;
+
+function updateLightning(dt) {
+  const stormy = getDaylightFactor() < 0.45 || danger >= 7;
+  lightning.t += dt;
+  if (stormy && !gameOver && !dockActive) {
+    lightning.next -= dt;
+    if (lightning.next <= 0) strikeLightning();
+  }
+  // Bright strike, a short gap, then a weaker re-strike
+  const t = lightning.t;
+  let f = Math.exp(-t * 9);
+  if (t > 0.12) f = Math.max(f, 0.75 * Math.exp(-(t - 0.12) * 6));
+  lightningFlash = t < 1.5 ? f : 0;
+}
+
+function strikeLightning() {
+  lightning.t = 0;
+  lightning.next = 12 + Math.random() * 25 - Math.min(8, danger * 0.6);
+  const bottom = getSurfaceY() * (0.5 + Math.random() * 0.2);
+  let x = canvas.width * (0.1 + Math.random() * 0.8);
+  let y = 0;
+  const pts = [];
+  while (y < bottom) {
+    pts.push([x, y]);
+    y += 12 + Math.random() * 22;
+    x += (Math.random() - 0.5) * 34;
+  }
+  pts.push([x, bottom]);
+  const from = pts[Math.floor(pts.length * (0.3 + Math.random() * 0.3))];
+  const dir = Math.random() < 0.5 ? -1 : 1;
+  const branch = [];
+  let bx = from[0], by = from[1];
+  for (let i = 0; i < 5; i++) {
+    branch.push([bx, by]);
+    bx += dir * (10 + Math.random() * 18);
+    by += 10 + Math.random() * 16;
+  }
+  lightning.bolt = { pts, branch };
+  triggerScreenShake(3);
+  // Thunder arrives later the further away the strike was
+  playThunder(0.4 + Math.random() * 1.6);
+}
+
+function drawLightningBolt() {
+  if (!lightning.bolt || lightningFlash < 0.03) return;
+  const a = Math.min(1, lightningFlash * 1.2);
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  const stroke = (pts, w, col) => {
+    ctx.strokeStyle = col;
+    ctx.lineWidth = w;
+    ctx.beginPath();
+    pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+    ctx.stroke();
+  };
+  stroke(lightning.bolt.pts, 10, `rgba(150,170,255,${a * 0.16})`);
+  stroke(lightning.bolt.pts, 3.5, `rgba(200,215,255,${a * 0.5})`);
+  stroke(lightning.bolt.pts, 1.4, `rgba(255,255,255,${a})`);
+  stroke(lightning.bolt.branch, 1, `rgba(230,235,255,${a * 0.8})`);
+  ctx.restore();
+}
+
+function drawLightningFlash(surfaceY) {
+  if (lightningFlash < 0.01) return;
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  ctx.fillStyle = `rgba(190,205,255,${lightningFlash * 0.32})`;
+  ctx.fillRect(0, 0, canvas.width, surfaceY + 4);
+  ctx.fillStyle = `rgba(150,180,220,${lightningFlash * 0.07})`;
+  ctx.fillRect(0, surfaceY + 4, canvas.width, canvas.height - surfaceY);
+  ctx.restore();
+}
+
+// --- HUD: battery / headlight ---
+
+function updateBatteryHud() {
+  const fill = document.getElementById("battery-bar-fill");
+  if (!fill) return;
+  const pct = Math.max(0, Math.min(100, battery));
+  fill.style.width = pct + "%";
+  fill.classList.toggle("low", pct < 20);
+  const pctEl = document.getElementById("battery-pct");
+  if (pctEl) pctEl.textContent = Math.round(pct);
+  const wrap = document.getElementById("battery-bar-wrap");
+  if (wrap) wrap.classList.toggle("off", !headlightOn);
+  const label = document.getElementById("battery-bar-label");
+  if (label) label.textContent = headlightOn ? "Světlo" : "Zhasnuto";
+}
+
+// =====================================================================
+// SOUND — procedural WebAudio, no files: sea, rain, engine, thunder and
+// minigame cues. Starts on the first key press (browsers block audio until
+// the player interacts). M mutes, and the choice is remembered.
+// =====================================================================
+
+const SOUND_VOLUME = 0.6;
+const sound = { ctx: null, master: null, noise: null, rain: null, engine: null, engineOsc: null, chug: null, muted: false };
+try {
+  sound.muted = localStorage.getItem("deep-awakes-muted") === "1";
+} catch (e) {
+  // storage unavailable — keep the default
+}
+
+function noiseLoop() {
+  const src = sound.ctx.createBufferSource();
+  src.buffer = sound.noise;
+  src.loop = true;
+  src.start();
+  return src;
+}
+
+function initSound() {
+  if (sound.ctx) {
+    if (sound.ctx.state === "suspended") sound.ctx.resume();
+    return;
+  }
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return;
+  const ac = new AC();
+  sound.ctx = ac;
+  sound.master = ac.createGain();
+  sound.master.gain.value = sound.muted ? 0 : SOUND_VOLUME;
+  sound.master.connect(ac.destination);
+
+  const len = ac.sampleRate * 2;
+  const buf = ac.createBuffer(1, len, ac.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+  sound.noise = buf;
+
+  // Sea: low rolling noise that swells and ebbs like waves
+  const seaLp = ac.createBiquadFilter();
+  seaLp.type = "lowpass";
+  seaLp.frequency.value = 380;
+  const sea = ac.createGain();
+  sea.gain.value = 0.06;
+  const seaLfo = ac.createOscillator();
+  seaLfo.frequency.value = 0.12;
+  const seaDepth = ac.createGain();
+  seaDepth.gain.value = 0.035;
+  seaLfo.connect(seaDepth);
+  seaDepth.connect(sea.gain);
+  seaLfo.start();
+  noiseLoop().connect(seaLp);
+  seaLp.connect(sea);
+  sea.connect(sound.master);
+
+  // Rain: soft hiss, louder at night
+  const rainHp = ac.createBiquadFilter();
+  rainHp.type = "highpass";
+  rainHp.frequency.value = 1500;
+  const rainLp = ac.createBiquadFilter();
+  rainLp.type = "lowpass";
+  rainLp.frequency.value = 7000;
+  sound.rain = ac.createGain();
+  sound.rain.gain.value = 0;
+  noiseLoop().connect(rainHp);
+  rainHp.connect(rainLp);
+  rainLp.connect(sound.rain);
+  sound.rain.connect(sound.master);
+
+  // Engine: a muffled diesel chug
+  const eng = ac.createOscillator();
+  eng.type = "sawtooth";
+  eng.frequency.value = 46;
+  const engLp = ac.createBiquadFilter();
+  engLp.type = "lowpass";
+  engLp.frequency.value = 170;
+  const am = ac.createGain();
+  am.gain.value = 0.7;
+  const chug = ac.createOscillator();
+  chug.frequency.value = 6;
+  const chugDepth = ac.createGain();
+  chugDepth.gain.value = 0.3;
+  chug.connect(chugDepth);
+  chugDepth.connect(am.gain);
+  chug.start();
+  sound.engine = ac.createGain();
+  sound.engine.gain.value = 0;
+  eng.connect(engLp);
+  engLp.connect(am);
+  am.connect(sound.engine);
+  sound.engine.connect(sound.master);
+  eng.start();
+  sound.engineOsc = eng;
+  sound.chug = chug;
+  syncSoundHint();
+}
+
+function setSmooth(param, value, tc) {
+  if (param._target === value) return;
+  param._target = value;
+  param.setTargetAtTime(value, sound.ctx.currentTime, tc);
+}
+
+function updateSound() {
+  if (!sound.ctx) return;
+  const night = getDaylightFactor() < 0.35;
+  const sailing = !dockActive && !fishingMode && !detektorMode && !dialogueActive && !gameOver &&
+    !!(keys["a"] || keys["arrowleft"] || keys["d"] || keys["arrowright"]);
+  setSmooth(sound.rain.gain, gameOver ? 0 : night ? 0.045 : 0.016, 0.8);
+  setSmooth(sound.engine.gain, gameOver ? 0 : sailing ? 0.07 : 0.018, 0.25);
+  setSmooth(sound.engineOsc.frequency, 40 + upgrades.engine * 5 + (sailing ? 12 : 0), 0.4);
+  setSmooth(sound.chug.frequency, sailing ? 9 + upgrades.engine : 5, 0.4);
+}
+
+function syncSoundHint() {
+  const el = document.getElementById("sound-state");
+  if (el) el.textContent = sound.muted ? "zvuk vyp." : "zvuk";
+}
+
+function toggleSound() {
+  initSound();
+  sound.muted = !sound.muted;
+  try {
+    localStorage.setItem("deep-awakes-muted", sound.muted ? "1" : "0");
+  } catch (e) {
+    // storage unavailable — the toggle still works for this session
+  }
+  if (sound.master) sound.master.gain.setTargetAtTime(sound.muted ? 0 : SOUND_VOLUME, sound.ctx.currentTime, 0.05);
+  syncSoundHint();
+}
+
+function sfxTone(freq, opts = {}) {
+  if (!sound.ctx || sound.muted) return;
+  const ac = sound.ctx;
+  const t0 = ac.currentTime + (opts.delay || 0);
+  const dur = opts.dur || 0.2;
+  const osc = ac.createOscillator();
+  osc.type = opts.type || "sine";
+  osc.frequency.setValueAtTime(freq, t0);
+  if (opts.to) osc.frequency.exponentialRampToValueAtTime(opts.to, t0 + dur);
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(opts.gain || 0.1, t0 + (opts.attack || 0.005));
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  osc.connect(g);
+  g.connect(sound.master);
+  osc.start(t0);
+  osc.stop(t0 + dur + 0.05);
+}
+
+function sfxNoise(opts) {
+  if (!sound.ctx || sound.muted) return;
+  const ac = sound.ctx;
+  const t0 = ac.currentTime + (opts.delay || 0);
+  const dur = opts.dur || 0.3;
+  const src = ac.createBufferSource();
+  src.buffer = sound.noise;
+  src.loop = true;
+  const f = ac.createBiquadFilter();
+  f.type = opts.filter || "lowpass";
+  f.frequency.setValueAtTime(opts.freq || 800, t0);
+  if (opts.to) f.frequency.exponentialRampToValueAtTime(opts.to, t0 + dur);
+  f.Q.value = opts.q || 0.7;
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(opts.gain || 0.1, t0 + (opts.attack || 0.01));
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  src.connect(f);
+  f.connect(g);
+  g.connect(sound.master);
+  src.start(t0, Math.random() * 1.5);
+  src.stop(t0 + dur + 0.05);
+}
+
+function playThunder(delay) {
+  sfxNoise({ filter: "lowpass", freq: 900, to: 90, dur: 3.8, gain: 0.45, attack: 0.04, delay });
+  sfxNoise({ filter: "lowpass", freq: 140, dur: 4.5, gain: 0.3, attack: 0.3, delay: delay + 0.1 });
+}
+function playSplash() { sfxNoise({ filter: "bandpass", freq: 1100, to: 300, q: 0.8, dur: 0.45, gain: 0.15 }); }
+function playCast() {
+  sfxNoise({ filter: "bandpass", freq: 2600, to: 700, q: 1.2, dur: 0.32, gain: 0.06 });
+  sfxNoise({ filter: "bandpass", freq: 1000, to: 280, q: 0.8, dur: 0.45, gain: 0.13, delay: 0.8 });
+}
+function playHit() {
+  sfxTone(520, { to: 780, dur: 0.12, type: "triangle", gain: 0.08 });
+  sfxTone(1560, { dur: 0.06, gain: 0.025 });
+}
+function playMiss() {
+  sfxTone(150, { to: 70, dur: 0.22, gain: 0.12 });
+  sfxNoise({ filter: "lowpass", freq: 400, dur: 0.12, gain: 0.05 });
+}
+function playSnap() {
+  sfxNoise({ filter: "highpass", freq: 2500, dur: 0.08, gain: 0.18 });
+  sfxTone(900, { to: 160, dur: 0.32, type: "triangle", gain: 0.06 });
+  sfxNoise({ filter: "bandpass", freq: 900, to: 250, q: 0.8, dur: 0.5, gain: 0.1, delay: 0.15 });
+}
+function playCatch() {
+  sfxTone(660, { dur: 0.2, gain: 0.07 });
+  sfxTone(990, { dur: 0.35, gain: 0.07, delay: 0.12 });
+  playSplash();
+}
+function playCoins() { [1320, 1760, 2093].forEach((f, i) => sfxTone(f, { dur: 0.18, gain: 0.045, delay: i * 0.07 })); }
+function playClick() { sfxTone(1400, { dur: 0.04, type: "square", gain: 0.02 }); }
+function playPing() { sfxTone(1180, { dur: 0.3, gain: 0.045 }); }
+
 
 function drawSeaweed(wx, baseY) {
   const sx = wx - camera.x;
@@ -3620,46 +4197,509 @@ function drawSeaweed(wx, baseY) {
   }
 }
 
+// =====================================================================
+// WILDLIFE — fish, jellyfish and watchers behave like living things:
+// they pick goals, pause, school together, shy away from the engine,
+// get curious about the headlight and the bait.
+// =====================================================================
+
+function wlRand(a, b) {
+  return a + Math.random() * (b - a);
+}
+
+function wlClamp(v, lo, hi) {
+  return Math.max(lo, Math.min(hi, v));
+}
+
+function newBgFish(o) {
+  const base = o.shoal ? o.shoal.wx + o.offX : o.wx;
+  const depth = o.shoal ? o.shoal.depth + o.offD : o.depth;
+  return {
+    wx: base,
+    depth,
+    vx: 0,
+    vd: 0,                              // depth units per second
+    face: Math.random() < 0.5 ? -1 : 1, // eased −1…1, so turning looks like a flip
+    size: o.size,
+    body: o.body,
+    hue: o.hue,
+    shoal: o.shoal || null,
+    offX: o.offX || 0,
+    offD: o.offD || 0,
+    tailPhase: Math.random() * Math.PI * 2,
+    state: "idle",
+    stateT: wlRand(0.2, 3),
+    tx: base,
+    td: depth,
+    cruise: wlRand(22, 52) * (o.size > 10 ? 0.8 : 1),
+    burst: 0,                           // seconds of startle left
+    fleeDir: 1,
+    curious: Math.random() < 0.4,
+    lit: 0,
+    pitch: 0
+  };
+}
+
+function seedWildlife() {
+  fish.length = 0;
+  shoals.length = 0;
+  jellies.length = 0;
+  watchers.length = 0;
+  lastWildlifePX = null;
+  boatVx = 0;
+  wildFishing = false;
+
+  const half = worldWidth / 2 - 300;
+
+  // Small fish keep together in shoals that wander the open water as one
+  for (let s = 0; s < 9; s++) {
+    const sh = {
+      wx: wlRand(-half, half),
+      depth: wlRand(80, 300),
+      vx: 0,
+      vd: 0,
+      tx: 0,
+      td: 0,
+      speed: wlRand(26, 46),
+      wait: 0,
+      panic: 0,
+      size: wlRand(5, 8),
+      hue: Math.random()
+    };
+    sh.tx = sh.wx;
+    sh.td = sh.depth;
+    shoals.push(sh);
+    const n = 5 + Math.floor(Math.random() * 3);
+    for (let k = 0; k < n; k++) {
+      fish.push(newBgFish({
+        shoal: sh,
+        size: sh.size * wlRand(0.85, 1.15),
+        body: "slim",
+        offX: wlRand(-60, 60),
+        offD: wlRand(-22, 22),
+        hue: wlClamp(sh.hue + wlRand(-0.06, 0.06), 0, 1)
+      }));
+    }
+  }
+
+  // Bigger loners go their own way
+  const bodies = ["round", "slim", "flat", "round"];
+  for (let i = 0; i < 18; i++) {
+    fish.push(newBgFish({
+      wx: wlRand(-half, half),
+      depth: wlRand(70, 360),
+      size: wlRand(8, 16),
+      body: bodies[i % bodies.length],
+      hue: Math.random()
+    }));
+  }
+
+  // Jellyfish drift on the current and propel themselves with pulses
+  [[800, 0.45], [-400, 0.55], [2200, 0.38], [-1800, 0.62], [3500, 0.48], [-2800, 0.42]].forEach(([wx, depth], i) => {
+    jellies.push({
+      wx, depth, vx: 0, vy: 0,
+      phase: Math.random(),
+      period: wlRand(2.4, 3.4),
+      size: wlRand(0.9, 1.25),
+      seed: i,
+      contract: 0
+    });
+  });
+
+  // Watchers in the dark: they stalk the boat, blink at odd moments and avoid the light
+  for (let i = 0; i < 3; i++) {
+    watchers.push({
+      wx: 0, depth: wlRand(0.4, 0.8), alpha: 0, placed: false,
+      side: i % 2 ? 1 : -1, dist: wlRand(450, 720),
+      blinkIn: wlRand(1.5, 5), blinkT: 0, blink: 0,
+      gaze: 0, fear: 0
+    });
+  }
+}
+
+function pickLonerTarget(f, ctxInfo) {
+  const half = worldWidth / 2 - 200;
+  const { night, beamOn, beamHalf, pxPer } = ctxInfo;
+  // Curious fish are drawn to the headlight at night, and to the bait while you fish
+  if (f.curious && fishingMode && Math.abs(f.wx - player.x) < 700) {
+    f.tx = player.x + (Math.random() < 0.5 ? -1 : 1) * wlRand(60, 160);
+    f.td = wlRand(58, 84);
+    return;
+  }
+  if (f.curious && night && beamOn && Math.abs(f.wx - player.x) < 500) {
+    f.tx = player.x + wlRand(-beamHalf * 0.4, beamHalf * 0.4);
+    f.td = wlRand(90, 190);
+    return;
+  }
+  f.tx = wlClamp(f.wx + wlRand(-420, 420), -half, half);
+  f.td = wlClamp(f.depth + wlRand(-60, 60), 62, 370);
+}
+
+function updateWildlife(dt) {
+  if (!(dt > 0)) return;
+  const surfaceY = getSurfaceY();
+  const pxPer = Math.max(0.3, (canvas.height - surfaceY - 28) * 0.92 / 400);
+  const now = performance.now() / 1000;
+  const half = worldWidth / 2 - 200;
+
+  // How fast the boat is moving: the engine noise is what spooks fish
+  if (lastWildlifePX === null) lastWildlifePX = player.x;
+  let bvx = (player.x - lastWildlifePX) / dt;
+  lastWildlifePX = player.x;
+  if (Math.abs(bvx) > 900) bvx = 0; // teleport (restart)
+  boatVx += (bvx - boatVx) * Math.min(1, dt * 6);
+  const boatMoving = Math.abs(boatVx) > 60;
+
+  const night = getDaylightFactor() < 0.4;
+  const beamOn = headlight.on && headlight.strength > 0.05;
+  const beamHalf = headlight.halfW;
+  const beamH = Math.max(1, canvas.height - surfaceY - 40);
+  const info = { night, beamOn, beamHalf, pxPer };
+
+  // Starting a catch: curious fish nearby come to inspect the bait
+  if (fishingMode && !wildFishing) {
+    wildFishing = true;
+    fish.forEach((f) => {
+      if (!f.shoal && f.curious && Math.abs(f.wx - player.x) < 700) {
+        pickLonerTarget(f, info);
+        f.state = "cruise";
+        f.stateT = 12;
+      }
+    });
+  } else if (!fishingMode) {
+    wildFishing = false;
+  }
+
+  // ---- shoals: one shared goal, scatter when the engine roars past ----
+  shoals.forEach((sh) => {
+    const dxB = sh.wx - player.x;
+    if (boatMoving && Math.abs(dxB) < 260 && sh.depth < 230 && sh.panic <= 0) {
+      sh.panic = wlRand(1.1, 1.8);
+      const away = Math.sign(dxB) || (Math.random() < 0.5 ? -1 : 1);
+      sh.tx = wlClamp(sh.wx + away * wlRand(320, 520), -half, half);
+      sh.td = wlClamp(sh.depth + wlRand(30, 80), 80, 340);
+    }
+    if (sh.panic > 0) {
+      sh.panic -= dt;
+    } else if (sh.wait > 0) {
+      sh.wait -= dt;
+    } else if (Math.hypot(sh.tx - sh.wx, (sh.td - sh.depth) * pxPer) < 30) {
+      sh.wait = Math.random() < 0.5 ? wlRand(1.5, 4.5) : 0;
+      sh.tx = wlClamp(sh.wx + wlRand(-500, 500), -half, half);
+      sh.td = wlClamp(sh.depth + wlRand(-70, 70), 80, 330);
+    }
+    const sp = sh.panic > 0 ? sh.speed * 3.2 : sh.wait > 0 ? 3 : sh.speed;
+    const ddx = sh.tx - sh.wx;
+    const ddd = (sh.td - sh.depth) * pxPer;
+    const dist = Math.hypot(ddx, ddd) || 1;
+    const k = Math.min(1, dt * (sh.panic > 0 ? 5 : 1.2));
+    sh.vx += (ddx / dist * sp - sh.vx) * k;
+    sh.vd += (ddd / dist * sp / pxPer - sh.vd) * k;
+    sh.wx = wlClamp(sh.wx + sh.vx * dt, -half, half);
+    sh.depth = wlClamp(sh.depth + sh.vd * dt, 70, 350);
+  });
+
+  // ---- individual fish ----
+  fish.forEach((f) => {
+    let wantVx = 0, wantVd = 0;
+
+    if (f.shoal) {
+      const sh = f.shoal;
+      const t = now * 0.6 + f.tailPhase;
+      const tx = sh.wx + f.offX + Math.sin(t) * 10;
+      const td = sh.depth + f.offD + Math.cos(t * 0.8) * 5;
+      const cap = sh.speed * 3.4 + 40;
+      wantVx = wlClamp(sh.vx + (tx - f.wx) * 1.4, -cap, cap);
+      wantVd = wlClamp(sh.vd + (td - f.depth) * 1.4, -cap / pxPer, cap / pxPer);
+    } else {
+      f.stateT -= dt;
+      if (f.state === "cruise") {
+        const dx = f.tx - f.wx;
+        const dd = (f.td - f.depth) * pxPer;
+        const dist = Math.hypot(dx, dd);
+        if (dist < 18 || f.stateT < 0) {
+          f.state = "idle";
+          f.stateT = wlRand(1, 4);       // stop and hover a while
+        } else {
+          wantVx = dx / dist * f.cruise;
+          wantVd = dd / dist * f.cruise / pxPer;
+        }
+      } else {
+        // idle: hang in the water with a lazy wobble
+        wantVx = Math.sin(now * 0.7 + f.tailPhase) * 3;
+        wantVd = Math.cos(now * 0.5 + f.tailPhase) * 1.5;
+        if (f.stateT < 0) {
+          pickLonerTarget(f, info);
+          f.state = "cruise";
+          f.stateT = wlRand(6, 12);
+        }
+      }
+    }
+
+    // Startle: the engine passes close above a shallow fish
+    if (boatMoving && f.burst <= 0 && f.depth < 190 && Math.abs(f.wx - player.x) < 220) {
+      f.burst = wlRand(0.7, 1.2);
+      f.fleeDir = Math.sign(f.wx - player.x) || (Math.random() < 0.5 ? -1 : 1);
+    }
+    if (f.burst > 0) {
+      f.burst -= dt;
+      wantVx = f.fleeDir * f.cruise * 3.6;
+      wantVd = 45;
+    }
+
+    const k = Math.min(1, dt * (f.burst > 0 ? 7 : 1.8));
+    f.vx += (wantVx - f.vx) * k;
+    f.vd += (wantVd - f.vd) * k;
+    f.wx = wlClamp(f.wx + f.vx * dt, -half, half);
+    f.depth = wlClamp(f.depth + f.vd * dt, 58, 385);
+
+    // Facing eases over, so a turn squashes the fish through its flip
+    if (Math.abs(f.vx) > 5) f.face += (Math.sign(f.vx) - f.face) * Math.min(1, dt * 5);
+    const speed = Math.hypot(f.vx, f.vd * pxPer);
+    f.tailPhase += dt * (3 + speed * 0.12);
+    f.pitch += (Math.atan2(f.vd * pxPer, Math.abs(f.vx) + 12) - f.pitch) * Math.min(1, dt * 4);
+
+    // Fish in the headlight beam are lit up
+    let inBeam = 0;
+    if (beamOn) {
+      const dyPx = f.depth * pxPer;
+      const halfAt = 14 + (beamHalf - 14) * Math.min(1, dyPx / beamH);
+      if (Math.abs(f.wx - player.x) < halfAt * 0.9) inBeam = 1;
+    }
+    f.lit += (inBeam - f.lit) * Math.min(1, dt * 4);
+  });
+
+  // ---- jellyfish: contract → thrust up → glide and slowly sink ----
+  jellies.forEach((j) => {
+    j.phase += dt / j.period;
+    const ph = j.phase % 1;
+    j.contract = ph < 0.3 ? Math.sin(ph / 0.3 * Math.PI) : 0;
+    const targetVy = j.contract > 0.02 ? -0.04 : 0.012;
+    j.vy += (targetVy - j.vy) * Math.min(1, dt * 3);
+    j.depth += j.vy * dt;
+    if (j.depth < 0.3) j.vy += dt * 0.05;
+    if (j.depth > 0.78) j.vy -= dt * 0.05;
+    j.depth = wlClamp(j.depth, 0.26, 0.82);
+    const current = Math.sin(now * 0.05 + j.seed * 2.1) * 14;
+    j.vx += (current - j.vx) * Math.min(1, dt * 0.4);
+    j.wx += j.vx * dt;
+  });
+
+  updateWatchers(dt, beamOn, beamHalf, boatMoving);
+}
+
+function updateWatchers(dt, beamOn, beamHalf, boatMoving) {
+  const want = danger >= 9 ? 3 : danger >= 6 ? 2 : danger >= 3 ? 1 : 0;
+  watchers.forEach((w, i) => {
+    const active = i < want;
+
+    if (!w.placed && active) {
+      w.placed = true;
+      w.wx = player.x + w.side * w.dist;
+    }
+
+    // They trail the boat with a lag, drifting rather than following rigidly
+    if (w.placed) {
+      const desired = player.x + w.side * w.dist + Math.sin(performance.now() * 0.0003 + i * 2) * 40;
+      w.wx += (desired - w.wx) * Math.min(1, dt * 0.35);
+    }
+
+    // Light and nearness frighten them: they fade, and come back from a new side
+    const dx = Math.abs(w.wx - player.x);
+    const inLight = beamOn && dx < Math.max(40, beamHalf * 0.55);
+    if (inLight || dx < 220) w.fear = Math.min(1.2, w.fear + dt * 1.6);
+    else w.fear = Math.max(0, w.fear - dt * 0.5);
+
+    const target = active ? Math.max(0, 1 - w.fear) : 0;
+    w.alpha += (target - w.alpha) * Math.min(1, dt * 2.5);
+
+    if (active && w.fear > 1 && w.alpha < 0.05) {
+      w.side = Math.random() < 0.5 ? -1 : 1;
+      w.dist = wlRand(450, 720);
+      w.depth = wlRand(0.4, 0.8);
+      w.wx = player.x + w.side * w.dist;
+      w.fear = 0;
+    }
+
+    // Blink at irregular moments, sometimes twice in a row
+    w.blinkIn -= dt;
+    if (w.blinkIn <= 0 && w.blinkT <= 0) {
+      w.blinkT = 0.18;
+      w.blinkIn = Math.random() < 0.2 ? 0.25 : wlRand(1.8, 6);
+    }
+    if (w.blinkT > 0) {
+      w.blinkT -= dt;
+      w.blink = Math.sin(Math.max(0, w.blinkT) / 0.18 * Math.PI);
+    } else {
+      w.blink = 0;
+    }
+
+    // Pupils track the boat
+    const g = wlClamp((player.x - w.wx) / 400, -1, 1);
+    w.gaze += (g - w.gaze) * Math.min(1, dt * 3);
+  });
+}
+
+function drawFishEntity(f, surfaceY) {
+  const sx = f.wx - camera.x;
+  if (sx < -70 || sx > canvas.width + 70) return;
+
+  const pxPer = (canvas.height - surfaceY - 28) * 0.92 / 400;
+  const fy = surfaceY + f.depth * pxPer;
+  if (fy > canvas.height - 10) return;
+
+  const r = f.size;
+  const speed = Math.hypot(f.vx, f.vd * pxPer);
+  const amp = Math.min(1, 0.25 + speed / 70);
+  const tail = Math.sin(f.tailPhase) * amp;
+  const daylight = getDaylightFactor();
+  const litAmt = f.lit * (1 - daylight * 0.6);
+
+  let rx, ry;
+  if (f.body === "round") { rx = r * 1.05; ry = r * 0.72; }
+  else if (f.body === "flat") { rx = r * 1.25; ry = r * 0.5; }
+  else { rx = r * 1.35; ry = r * 0.42; }
+
+  const hue = 140 + f.hue * 30;
+  const light = 20 + f.hue * 14 + litAmt * 20;
+  const sat = 28 + litAmt * 14;
+
+  ctx.save();
+  ctx.translate(sx, fy);
+  const sc = Math.abs(f.face) < 0.07 ? 0.07 * (f.face < 0 ? -1 : 1) : f.face;
+  ctx.scale(sc, 1);
+  ctx.rotate(f.pitch);
+  ctx.globalAlpha = 1 - Math.min(1, f.depth / 400) * 0.4;
+
+  // Tail, beating with the swim cycle
+  ctx.fillStyle = `hsl(${hue}, ${sat}%, ${light * 0.75}%)`;
+  ctx.beginPath();
+  ctx.moveTo(-rx * 0.8, 0);
+  ctx.lineTo(-rx * 1.85, -r * 0.55 + tail * r * 0.7);
+  ctx.quadraticCurveTo(-rx * 1.55, tail * r * 0.45, -rx * 1.85, r * 0.55 + tail * r * 0.7);
+  ctx.closePath();
+  ctx.fill();
+
+  // Dorsal fin
+  ctx.beginPath();
+  ctx.moveTo(-rx * 0.25, -ry * 0.85);
+  ctx.lineTo(rx * 0.05 - tail * r * 0.1, -ry * 1.9);
+  ctx.lineTo(rx * 0.45, -ry * 0.8);
+  ctx.closePath();
+  ctx.fill();
+
+  // Body with a lighter belly
+  ctx.save();
+  ctx.rotate(tail * 0.05);
+  ctx.fillStyle = `hsl(${hue}, ${sat}%, ${light}%)`;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = `hsla(${hue}, ${sat - 8}%, ${light + 14}%, 0.5)`;
+  ctx.beginPath();
+  ctx.ellipse(0, ry * 0.3, rx * 0.88, ry * 0.55, 0, 0, Math.PI);
+  ctx.fill();
+  ctx.restore();
+
+  // Gill line and eye
+  ctx.strokeStyle = "rgba(0,0,0,0.25)";
+  ctx.lineWidth = 0.8;
+  ctx.beginPath();
+  ctx.arc(rx * 0.35, 0, ry * 0.8, -1.1, 1.1);
+  ctx.stroke();
+  ctx.fillStyle = `rgba(210,228,210,${0.45 + litAmt * 0.5})`;
+  ctx.beginPath();
+  ctx.arc(rx * 0.62, -ry * 0.15, Math.max(1, r * 0.13), 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
 function drawJellyfish(surfaceY) {
   const t = performance.now() * 0.001;
-  const jellies = [
-    { wx: 800, depth: 0.45 }, { wx: -400, depth: 0.55 },
-    { wx: 2200, depth: 0.38 }, { wx: -1800, depth: 0.62 },
-    { wx: 3500, depth: 0.48 }, { wx: -2800, depth: 0.42 }
-  ];
   jellies.forEach((j, i) => {
     const sx = j.wx - camera.x;
-    if (sx < -60 || sx > canvas.width + 60) return;
-    const fy = surfaceY + (canvas.height - surfaceY) * j.depth + Math.sin(t * 0.6 + i * 1.8) * 14;
-    const pulse = 0.85 + Math.sin(t * 1.8 + i) * 0.15;
+    if (sx < -70 || sx > canvas.width + 70) return;
+    const fy = surfaceY + (canvas.height - surfaceY) * j.depth;
+    addGlow(sx, fy, 60 * j.size, 0.35 + 0.3 * j.contract, "210,110,200");
+
+    // The bell squeezes inward and lengthens when it pulses
+    const c = j.contract;
+    const jr = 18 * j.size;
+    const rx = jr * (1 - 0.24 * c);
+    const ry = jr * 0.6 * (1 + 0.3 * c);
+    // Trailing parts lag behind the motion
+    const lagX = wlClamp(-j.vx * 0.5, -10, 10);
+    const lagY = wlClamp(j.vy * 400, -12, 12);
+
     ctx.save();
     ctx.translate(sx, fy);
-    // Bell
-    const jr = 18 * pulse;
-    const jg = ctx.createRadialGradient(0, 0, 0, 0, 0, jr);
-    jg.addColorStop(0, "rgba(200,120,180,0.45)");
+
+    const jg = ctx.createRadialGradient(0, 0, 0, 0, 0, rx);
+    jg.addColorStop(0, `rgba(200,120,180,${0.45 + c * 0.12})`);
     jg.addColorStop(0.7, "rgba(160,80,140,0.25)");
     jg.addColorStop(1, "rgba(100,40,100,0)");
     ctx.fillStyle = jg;
     ctx.beginPath();
-    ctx.ellipse(0, 0, jr, jr * 0.6, 0, Math.PI, 0);
+    ctx.ellipse(0, 0, rx, ry, 0, Math.PI, 0);
     ctx.fill();
-    // Bioluminescent core
-    ctx.fillStyle = "rgba(220,160,220,0.12)";
+
+    // Bioluminescent core flares as it pushes
+    ctx.fillStyle = `rgba(220,160,220,${0.12 + c * 0.2})`;
     ctx.beginPath();
-    ctx.arc(0, -2, jr * 0.3, 0, Math.PI * 2);
+    ctx.arc(0, -2, rx * 0.3, 0, Math.PI * 2);
     ctx.fill();
-    // Tentacles
-    ctx.strokeStyle = "rgba(200,100,180,0.18)";
+
+    // Tentacles trail and ripple
+    ctx.strokeStyle = "rgba(200,100,180,0.2)";
     ctx.lineWidth = 1;
     for (let k = -2; k <= 2; k++) {
+      const len = 30 + Math.abs(k) * -3 + lagY;
       ctx.beginPath();
-      ctx.moveTo(k * 5, 0);
-      ctx.quadraticCurveTo(k * 5 + Math.sin(t + k) * 8, 18, k * 4 + Math.sin(t * 1.2 + k) * 12, 32);
+      ctx.moveTo(k * 5 * (1 - 0.2 * c), 0);
+      ctx.quadraticCurveTo(
+        k * 5 + lagX * 0.5 + Math.sin(t * 1.3 + k + i) * 6,
+        len * 0.55,
+        k * 4 + lagX + Math.sin(t * 1.6 + k * 1.3 + i) * 9,
+        len
+      );
       ctx.stroke();
     }
     ctx.restore();
   });
+}
+
+function drawDeepEyes(surfaceY) {
+  const t = performance.now() * 0.001;
+  ctx.save();
+  watchers.forEach((w) => {
+    if (w.alpha < 0.02) return;
+    const sx = w.wx - camera.x;
+    if (sx < -40 || sx > canvas.width + 40) return;
+    const ey = surfaceY + (canvas.height - surfaceY) * w.depth + Math.sin(t * 0.4 + w.dist) * 4;
+
+    // Each eye is slit-pupilled and closes with the blink
+    const open = Math.max(0.08, 1 - w.blink);
+    [-8, 8].forEach((ox) => {
+      const ex = sx + ox;
+      const glow = ctx.createRadialGradient(ex, ey, 0, ex, ey, 16);
+      glow.addColorStop(0, `rgba(255,40,60,${0.35 * w.alpha})`);
+      glow.addColorStop(1, "rgba(255,40,60,0)");
+      ctx.fillStyle = glow;
+      ctx.fillRect(ex - 16, ey - 16, 32, 32);
+
+      ctx.fillStyle = `rgba(255,50,70,${0.9 * w.alpha})`;
+      ctx.beginPath();
+      ctx.ellipse(ex, ey, 4.6, 3 * open, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = `rgba(20,0,6,${0.95 * w.alpha})`;
+      ctx.beginPath();
+      ctx.ellipse(ex + w.gaze * 1.8, ey, 1.1, 2.7 * open, 0, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  });
+  ctx.restore();
 }
 
 function boatBob() {
@@ -4105,43 +5145,6 @@ function drawVignette() {
   ctx.restore();
 }
 
-// Floating particles in water (marine snow / glowing plankton)
-function drawWaterParticles(surfaceY) {
-  const t = performance.now() * 0.001;
-  ctx.save();
-  ctx.globalCompositeOperation = "screen";
-  // Increased count for better atmosphere
-  for (let i = 0; i < 70; i++) {
-    const wx = hash(i * 67) * worldWidth - worldWidth / 2;
-    const sx = wx - camera.x;
-    if (sx < -10 || sx > canvas.width + 10) continue;
-    
-    // Spread them more deeply
-    const depthRatio = hash(i * 83);
-    const baseY = surfaceY + 20 + depthRatio * (canvas.height - surfaceY) * 0.95;
-    
-    const dy = Math.sin(t * 0.4 + i * 2.1) * (10 + depthRatio * 15);
-    const dx = Math.sin(t * 0.3 + i * 1.7) * (6 + depthRatio * 8);
-    const alpha = 0.05 + Math.sin(t * 0.8 + i * 3) * 0.08 + (danger / 24); // glow more with danger
-    
-    // Size varies, some are tiny specs, some are larger plankton
-    const r = 0.8 + hash(i * 101) * 2.5;
-    
-    // Create soft glow
-    const glowGrad = ctx.createRadialGradient(sx + dx, baseY + dy, 0, sx + dx, baseY + dy, r * 2.5);
-    // Tint plankton slightly cyan/green, but shift to warm/aberrant colors if danger is high
-    const hue = 160 - (danger * 3); 
-    glowGrad.addColorStop(0, `hsla(${hue}, 80%, 80%, ${alpha + 0.1})`);
-    glowGrad.addColorStop(0.5, `hsla(${hue}, 70%, 60%, ${alpha * 0.6})`);
-    glowGrad.addColorStop(1, `hsla(${hue}, 60%, 40%, 0)`);
-    
-    ctx.fillStyle = glowGrad;
-    ctx.beginPath();
-    ctx.arc(sx + dx, baseY + dy, r * 2.5, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.restore();
-}
 
 
 // =====================================================================
@@ -4170,23 +5173,31 @@ function getNearLighthouse() {
 }
 
 function openDockMenu() {
-  dockActive = true;
-  currentMenu = "dock";
-  
+  // The harbour line charges the battery whenever you tie up
+  battery = BATTERY_MAX;
+  batteryDeadWarned = false;
+
   if (relicsFound === 6) {
-    triggerDialogue("Strážce majáku", "Přinesl jsi všech 6 relikvií! Položil jsi je na oltář pod majákem. Celý ostrov se otřásl... Zelené světlo prorazilo temnotu a zahnalo stíny zpět do propasti. Jsi volný. VYHRÁL JSI!");
+    // Victory: the relics go on the altar and the curse lifts. Play continues.
     relicsFound = 7;
+    gameWon = true;
     syncRelicsHud();
+    addDanger(-12);
+    triggerScreenShake(12);
+    triggerDialogue("Strážce majáku", "Přinesl jsi všech 6 relikvií! Položil jsi je na oltář pod majákem. Celý ostrov se otřásl... Zelené světlo prorazilo temnotu a zahnalo stíny zpět do propasti. Jsi volný. VYHRÁL JSI!");
+    triggerDialogue("Strážce majáku", "Moře je teď klidnější a šílenství si k tobě hledá cestu jen pomalu. Ryby tu pořád jsou — plav, kam chceš.");
     return;
   }
-  
+
+  dockActive = true;
+  currentMenu = "dock";
+
   if (dockMenuUI) {
     dockMenuUI.classList.remove("hidden");
   }
-  
+
   // Decrease danger level
-  danger = Math.max(0, danger - 4);
-  if (dangerUI) dangerUI.innerText = Math.round(danger);
+  addDanger(-4);
 }
 
 function openOilRigMenu() {
@@ -4238,14 +5249,19 @@ function initMenuButtons() {
     });
   }
   if (btnRepairShip) {
+    const repairLabel = btnRepairShip.textContent;
     btnRepairShip.addEventListener("click", () => {
       if (gold >= 25) {
         gold -= 25;
         if (goldUI) goldUI.innerText = gold;
-        danger = 0;
-        if (dangerUI) dangerUI.innerText = danger;
+        addDanger(-12);
         triggerScreenShake(5);
+        btnRepairShip.textContent = "Mysl je klidná";
+      } else {
+        btnRepairShip.textContent = "Nedostatek peněz";
       }
+      clearTimeout(btnRepairShip._resetTimer);
+      btnRepairShip._resetTimer = setTimeout(() => { btnRepairShip.textContent = repairLabel; }, 1400);
     });
   }
   if (btnLeaveDock) {
@@ -4274,6 +5290,9 @@ function initMenuButtons() {
   if (btnUpgradeRodQuality) btnUpgradeRodQuality.addEventListener("click", () => buyRodUpgrade("quality"));
   if (btnUpgradeRodLine) btnUpgradeRodLine.addEventListener("click", () => buyRodUpgrade("line"));
   if (btnUpgradeRodBait) btnUpgradeRodBait.addEventListener("click", () => buyRodUpgrade("bait"));
+
+  const btnBuyKit = document.getElementById("btn-buy-recharge-kit");
+  if (btnBuyKit) btnBuyKit.addEventListener("click", () => buyRechargeKit());
 
   if (btnDialogNext) {
     btnDialogNext.addEventListener("click", () => skipTypewriter());
@@ -4326,6 +5345,7 @@ function sellAllFish() {
   });
   
   gold += totalVal;
+  playCoins();
   if (goldUI) goldUI.innerText = gold;
   
   const count = inventory.length;
@@ -4365,6 +5385,16 @@ function updateOilRigUI() {
       }
     }
   });
+
+  const kitLvl = document.getElementById("recharge-kit-level");
+  const kitBtn = document.getElementById("btn-buy-recharge-kit");
+  if (kitLvl) kitLvl.textContent = `(${batteryRechargesLeft}× zbývá)`;
+  if (kitBtn) {
+    const full = batteryRechargesLeft >= RECHARGE_KIT_USES;
+    kitBtn.textContent = full ? "PLNÁ" : `$${RECHARGE_KIT_COST}`;
+    kitBtn.disabled = full;
+  }
+
   if (oilrigResultEl) {
     oilrigResultEl.classList.add("hidden");
   }
@@ -4396,6 +5426,29 @@ function buyShipUpgrade(type) {
   updateOilRigUI();
   if (oilrigResultEl) {
     oilrigResultEl.textContent = `Vylepšení zakoupeno!`;
+    oilrigResultEl.className = "market-result ok";
+    oilrigResultEl.classList.remove("hidden");
+  }
+}
+
+function buyRechargeKit() {
+  if (batteryRechargesLeft >= RECHARGE_KIT_USES) return;
+  if (gold < RECHARGE_KIT_COST) {
+    if (oilrigResultEl) {
+      oilrigResultEl.textContent = "Nedostatek peněz!";
+      oilrigResultEl.className = "market-result bad";
+      oilrigResultEl.classList.remove("hidden");
+    }
+    return;
+  }
+  gold -= RECHARGE_KIT_COST;
+  if (goldUI) goldUI.innerText = gold;
+  batteryRechargeKitOwned = true;
+  batteryRechargesLeft = RECHARGE_KIT_USES;
+  playCoins();
+  updateOilRigUI();
+  if (oilrigResultEl) {
+    oilrigResultEl.textContent = "Dobíjecí sada zakoupena — na moři ji použiješ klávesou R.";
     oilrigResultEl.className = "market-result ok";
     oilrigResultEl.classList.remove("hidden");
   }
@@ -4577,6 +5630,13 @@ function closeDialogue() {
 }
 
 function triggerGameOver() {
+  // Nothing from the voyage may keep typing over the game-over text
+  dialogueQueue = [];
+  currentDialogue = null;
+  if (typewriterTimer) {
+    clearInterval(typewriterTimer);
+    typewriterTimer = null;
+  }
   gameOver = true;
   danger = 12;
   if (dangerUI) dangerUI.innerText = "12";
@@ -4605,6 +5665,31 @@ function triggerGameOver() {
 }
 
 function restartGame() {
+  // Drop anything left over from the previous voyage
+  dialogueQueue = [];
+  if (fishingMode) closeFishingPanel();
+  fishingLocked = false;
+  fishingEscapeAt = 0;
+  escapeCapture = null;
+  if (detektorMode) closeDetektorPanel();
+  detektorLocked = false;
+  if (rechargeMinigameActive) closeRechargeUI();
+  boatRods.forEach((r) => { r.p = 0; r.wait = 0; r.landed = false; });
+
+  battery = BATTERY_MAX;
+  headlightOn = true;
+  batteryDeadWarned = false;
+  batteryRechargeKitOwned = false;
+  batteryRechargesLeft = 0;
+  rodUpgrades.quality = 1;
+  rodUpgrades.line = 1;
+  rodUpgrades.bait = 1;
+  gameWon = false;
+  reefWarnedEntry = false;
+  lightning.t = 99;
+  bioWake.length = 0;
+  rainRipples.length = 0;
+
   gameOver = false;
   danger = 0;
   gold = Math.max(0, gold - 100);
@@ -4796,34 +5881,6 @@ function drawDockStructure(surfaceY) {
   ctx.restore();
 }
 
-function drawDeepEyes(surfaceY) {
-  if (danger < 3) return;
-  const t = performance.now() * 0.002;
-  
-  ctx.save();
-  for (let i = 0; i < 3; i++) {
-    const wx = hash(i * 19) * worldWidth - worldWidth / 2;
-    const sx = wx - camera.x;
-    
-    if (sx < 50 || sx > canvas.width - 50) continue;
-    
-    const ey = surfaceY + 120 + hash(i * 31) * (canvas.height - surfaceY - 180);
-    const blink = Math.sin(t * 0.5 + i * 3) > -0.85 ? 1 : 0;
-    
-    if (blink > 0) {
-      ctx.fillStyle = "rgba(255, 30, 60, 0.85)";
-      ctx.shadowColor = "rgba(255, 30, 60, 0.9)";
-      ctx.shadowBlur = 10;
-      
-      ctx.beginPath();
-      ctx.arc(sx - 8, ey, 2.5, 0, Math.PI * 2);
-      ctx.arc(sx + 8, ey, 2.5, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-  ctx.restore();
-}
-
 function drawTentacles(surfaceY) {
   if (danger < 6) return;
   const t = performance.now() * 0.001;
@@ -4896,7 +5953,9 @@ function updateRain() {
   const daylight = getDaylightFactor();
   const isNight = daylight < 0.35;
   const targetRain = isNight ? 100 : 30;
-  
+  const f60 = frameDt * 60;
+  const surfaceY = getSurfaceY();
+
   while (rainParticles.length < targetRain) {
     rainParticles.push({
       x: Math.random() * canvas.width,
@@ -4906,16 +5965,29 @@ function updateRain() {
       opacity: 0.15 + Math.random() * 0.25
     });
   }
-  
+
   for (let i = rainParticles.length - 1; i >= 0; i--) {
     const p = rainParticles[i];
-    p.y += p.speed;
-    p.x -= p.speed * 0.25;
-    
-    if (p.y > canvas.height || p.x < -20) {
+    p.y += p.speed * f60;
+    p.x -= p.speed * 0.25 * f60;
+
+    // Drops end at the sea surface (they used to fall straight through the water)
+    if (p.y + p.len > surfaceY) {
+      const hitX = p.x - p.len * 0.25;
+      if (hitX > -10 && hitX < canvas.width + 10 && rainRipples.length < 80) {
+        rainRipples.push({ x: hitX, t: 0 });
+      }
+      p.x = Math.random() * (canvas.width + 100);
+      p.y = -20 - Math.random() * 40;
+    } else if (p.x < -20) {
       p.x = Math.random() * (canvas.width + 100);
       p.y = -20;
     }
+  }
+
+  for (let i = rainRipples.length - 1; i >= 0; i--) {
+    rainRipples[i].t += frameDt;
+    if (rainRipples[i].t > 0.55) rainRipples.splice(i, 1);
   }
 }
 
@@ -5553,6 +6625,54 @@ function drawNpcBoats(surfaceY) {
 // GAME LOOP
 // =====================================================================
 
+// Context prompts float above the boat on a small dark plate, drawn last so the
+// boat never covers them. The oil rig and lighthouse used to have no prompt at all.
+function drawWorldPrompts(surfaceY) {
+  if (fishingMode || detektorMode || rechargeMinigameActive || dockActive || dialogueActive || gameOver) return;
+  const prompts = [];
+  if (getBubbleNearPlayer()) prompts.push(["SPACE", "začít rybařit", "255,245,230"]);
+  if (getDetektorSpotNearPlayer()) prompts.push(["F", "detektor / hledání pokladu", "180,230,210"]);
+  if (getNearDock()) prompts.push(["E", "zakotvit v přístavu", "255,230,160"]);
+  else if (getNearOilRig()) prompts.push(["E", "ropná věž — vylepšení lodi", "255,210,140"]);
+  else if (getNearLighthouse()) prompts.push(["E", "maják — vylepšení prutu", "255,230,160"]);
+  if (!prompts.length) return;
+
+  ctx.save();
+  ctx.textBaseline = "middle";
+  let y = surfaceY - 108;
+  prompts.forEach(([key, label, rgb]) => {
+    ctx.font = "700 11px ui-monospace, monospace";
+    const kw = ctx.measureText(key).width + 12;
+    ctx.font = "600 15px Georgia, serif";
+    const lw = ctx.measureText(label).width;
+    const w = kw + lw + 40;
+    const x = canvas.width / 2 - w / 2;
+
+    ctx.fillStyle = "rgba(5,8,10,0.62)";
+    ctx.strokeStyle = `rgba(${rgb},0.3)`;
+    ctx.lineWidth = 1;
+    gaugeRoundRect(ctx, x, y - 14, w, 28, 6);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = `rgba(${rgb},0.14)`;
+    ctx.strokeStyle = `rgba(${rgb},0.6)`;
+    gaugeRoundRect(ctx, x + 10, y - 9, kw, 18, 4);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = `rgba(${rgb},0.95)`;
+    ctx.font = "700 11px ui-monospace, monospace";
+    ctx.textAlign = "center";
+    ctx.fillText(key, x + 10 + kw / 2, y + 0.5);
+    ctx.font = "600 15px Georgia, serif";
+    ctx.textAlign = "left";
+    ctx.fillText(label, x + kw + 20, y + 1);
+    y -= 34;
+  });
+  ctx.restore();
+}
+
 function gameLoop() {
   const surfaceY = getSurfaceY();
 
@@ -5560,7 +6680,13 @@ function gameLoop() {
   frameDt = Math.min(0.1, (nowMs - lastFrameTime) / 1000);
   lastFrameTime = nowMs;
 
+  frameGlows.length = 0;
+  headlight = computeHeadlight();
   updateBoatRods(frameDt);
+  updateWildlife(frameDt);
+  updateBioWake(frameDt);
+  updateLightning(frameDt);
+  updateSound();
   updateScreenShake();
   updateRain();
   update();
@@ -5600,6 +6726,8 @@ function gameLoop() {
     }
   }
 
+  updateBatteryHud();
+
   ctx.save();
 
   // Apply Screen Shake
@@ -5622,6 +6750,7 @@ function gameLoop() {
 
   // === SKY ===
   drawSky(surfaceY);
+  drawLightningBolt();
 
   drawGulls(surfaceY);
 
@@ -5641,58 +6770,27 @@ function gameLoop() {
   drawFogLayers(surfaceY, "back");
 
   // === WATER SURFACE ===
-  drawWaterSurface(surfaceY);
   drawBubbles(surfaceY);
-
-  // Fishing prompt
-  if (!fishingMode && !detektorMode && getBubbleNearPlayer()) {
-    ctx.save();
-    ctx.font = "600 15px Georgia, serif";
-    ctx.textAlign = "center";
-    ctx.fillStyle = "rgba(255,245,230,0.95)";
-    ctx.shadowColor = "rgba(0,0,0,0.85)";
-    ctx.shadowBlur = 8;
-    ctx.fillText("SPACE \u2014 za\u010D\u00EDt ryba\u0159it", canvas.width / 2, surfaceY - 28);
-    ctx.restore();
-  }
-
-  // Detector prompt
-  if (!fishingMode && !detektorMode && getDetektorSpotNearPlayer()) {
-    ctx.save();
-    ctx.font = "600 15px Georgia, serif";
-    ctx.textAlign = "center";
-    ctx.fillStyle = "rgba(180,230,210,0.95)";
-    ctx.shadowColor = "rgba(0,0,0,0.85)";
-    ctx.shadowBlur = 8;
-    ctx.fillText("F \u2014 detektor / hled\u00E1n\u00ED pokladu", canvas.width / 2, surfaceY - 50);
-    ctx.restore();
-  }
-
-  // Dock prompt
-  if (!fishingMode && !detektorMode && getNearDock()) {
-    ctx.save();
-    ctx.font = "600 15px Georgia, serif";
-    ctx.textAlign = "center";
-    ctx.fillStyle = "rgba(255, 230, 160, 0.95)";
-    ctx.shadowColor = "rgba(0,0,0,0.85)";
-    ctx.shadowBlur = 8;
-    ctx.fillText("E \u2014 zakotvit v přístavu", canvas.width / 2, surfaceY - 72);
-    ctx.restore();
-  }
 
   const screenBoatX = canvas.width / 2;
 
   // === UNDERWATER ===
+  // Everything below the surface is drawn as if lit; the darkness pass then
+  // hides whatever the headlight and the living lights don't reach.
+  const bob = boatBob();
+  const keelY = surfaceY + 8 + bob;
+
   drawUnderwater(surfaceY);
-  drawDeepEyes(surfaceY);
+  drawUnderwaterCaustics(surfaceY);
   drawShadowCreature(surfaceY);
   drawLighthouseCliffUnderwater(surfaceY);
+  drawOilRigUnderwater(surfaceY);
   drawSeabed(surfaceY);
   drawCoralReef(surfaceY);
-  drawUnderwaterCaustics(surfaceY);
 
-  // Seaweed
-  for (let wx = -2000; wx < 8000; wx += 140) {
+  // Seaweed along the whole seabed (only the visible stretch is drawn)
+  const weedStart = Math.floor((camera.x - 160) / 140) * 140;
+  for (let wx = weedStart; wx < camera.x + canvas.width + 160; wx += 140) {
     const ground =
       canvas.height - 40 -
       Math.sin(wx * 0.003) * 42 -
@@ -5701,16 +6799,19 @@ function gameLoop() {
     drawSeaweed(wx + hash(wx) * 40, ground);
   }
 
-  // Draw light cone from bow headlight — battery-aware
-  const bob = boatBob();
-  const keelY = surfaceY + 8 + bob;
-  drawLightCone(screenBoatX, keelY, surfaceY);
-
-
-  drawWaterParticles(surfaceY);
+  drawMarineSnow(surfaceY);
   fish.forEach((f) => drawFishEntity(f, surfaceY));
   drawJellyfish(surfaceY);
 
+  drawUnderwaterDarkness(surfaceY, screenBoatX, keelY);
+
+  // Light, and things that glow on their own, sit on top of the darkness
+  drawLightCone(screenBoatX, keelY, surfaceY);
+  drawEmissiveGlows();
+  drawBioWake(surfaceY);
+  drawDeepEyes(surfaceY);
+  drawWaterSurface(surfaceY);
+  drawRainRipples(surfaceY);
   drawDetektorHints(surfaceY);
 
   // === BOAT ===
@@ -5735,19 +6836,10 @@ function gameLoop() {
   drawCliffPines(surfaceY);
   drawLighthouseTower(surfaceY);
 
-  // Sparkles
-  sparkles.forEach((sp) => {
-    const sx = sp.wx - camera.x;
-    if (sx < 0 || sx > canvas.width) return;
-    const sy = surfaceY + sp.y * (canvas.height - surfaceY) * 0.85;
-    const tw = Math.sin(sp.a + performance.now() * 0.001 * sp.sp) * 0.5 + 0.5;
-    ctx.fillStyle = `rgba(200,220,255,${0.04 + tw * 0.06})`;
-    ctx.fillRect(sx, sy, 2, 2);
-  });
-
   // === ATMOSPHERIC EFFECTS ===
   drawFogLayers(surfaceY, "front");
   drawRain();
+  drawLightningFlash(surfaceY);
   drawVignette();
 
   // Lighthouse beam (on top of everything for dramatic effect)
@@ -5773,12 +6865,15 @@ function gameLoop() {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
   }
 
+  drawWorldPrompts(surfaceY);
+
   ctx.restore();
 
   if (dangerUI) dangerUI.innerText = Math.round(danger);
 
   updateFishingHudVisuals();
   updateDetektorHudVisuals();
+  updateRechargeHudVisuals();
 
   requestAnimationFrame(gameLoop);
 }

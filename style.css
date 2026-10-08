@@ -263,3 +263,54 @@ canvas {
 .hidden {
   display: none;
 }
+
+/* ---------- battery / headlight bar ---------- */
+#battery-bar-wrap {
+  margin-top: 5px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  transition: opacity 0.3s ease;
+}
+
+#battery-bar-wrap.off { opacity: 0.45; }
+
+#battery-bar-label {
+  font-family: "Cinzel", serif;
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #6f8f80;
+  white-space: nowrap;
+  min-width: 5.6em;
+}
+
+#battery-bar-track {
+  flex: 1;
+  height: 5px;
+  background: rgba(30, 60, 50, 0.35);
+  border-radius: 3px;
+  overflow: hidden;
+  border: 1px solid rgba(40, 80, 70, 0.45);
+}
+
+#battery-bar-fill {
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, #2e7a5a, #8ae8b4);
+  border-radius: 3px;
+  box-shadow: 0 0 6px rgba(120, 230, 170, 0.4);
+  transition: width 0.3s linear;
+}
+
+#battery-bar-fill.low {
+  background: linear-gradient(90deg, #a06a20, #e8b840);
+  animation: danger-bar-flash 0.8s ease-in-out infinite;
+}
+
+#battery-pct {
+  font-family: "Cinzel", serif;
+  font-size: 0.78rem;
+  color: #6f8f80;
+  min-width: 1.8em;
+}
