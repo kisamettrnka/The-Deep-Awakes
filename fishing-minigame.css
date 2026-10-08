@@ -224,3 +224,68 @@
   transform-origin: 100px 100px; /* specific to SVG coordinate center */
   transform-box: fill-box;
 }
+
+/* fishing hit/miss flash — animated from game.js (flashFishingFeedback) */
+#fishing-flash-ring {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+/* ring + live fish view (canvas sits inside the dark centre disc) */
+.fishing-ring-wrap {
+  position: relative;
+  line-height: 0;
+}
+
+#fishing-fish-canvas {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 42%;
+  height: 42%;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.fishing-difficulty {
+  display: inline-flex;
+  gap: 4px;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+
+.diff-pip {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1px solid rgba(200, 180, 150, 0.4);
+  background: transparent;
+}
+
+.diff-pip.on { background: #3dd68c; border-color: #3dd68c; }
+.fishing-difficulty[data-level="3"] .diff-pip.on { background: #e0b84a; border-color: #e0b84a; }
+.fishing-difficulty[data-level="4"] .diff-pip.on { background: #e07a3a; border-color: #e07a3a; }
+.fishing-difficulty[data-level="5"] .diff-pip.on {
+  background: #d8443c;
+  border-color: #d8443c;
+  box-shadow: 0 0 6px rgba(216, 68, 60, 0.8);
+}
+
+.fishing-traits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: -4px 0 10px;
+}
+
+.fishing-traits:empty { display: none; }
+
+.fishing-trait {
+  padding: 1px 7px;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  color: #e8c9a0;
+  border: 1px solid rgba(200, 150, 100, 0.45);
+  background: rgba(80, 50, 30, 0.35);
+}

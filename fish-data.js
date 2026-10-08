@@ -3,6 +3,12 @@
 // 12 + 6 reef species (Common, Uncommon, Rare, Aberrant)
 // =====================================================================
 
+// Fishing minigame tuning per species:
+//   difficulty 1–5 — needle speed, green-zone width, hits needed, slip on a miss
+//   traits: "reverse" (needle flips direction), "erratic" (needle speed surges),
+//           "drift" (green zones wander around the ring), "shrink" (zones narrow as the fish tires)
+//   shape — silhouette drawn in the centre of the fishing ring
+
 // Reef zone boundaries (world x)
 const REEF_WX_START = -3800;
 const REEF_WX_END   = -1800;
@@ -23,6 +29,9 @@ function isInOilRigZone(playerX) {
 const FISH_SPECIES = [
   {
     id: "herring",
+    difficulty: 1,
+    traits: [],
+    shape: "slim",
     name: "Sleď obecný",
     rarity: "common",
     price: 6,
@@ -36,6 +45,9 @@ const FISH_SPECIES = [
   },
   {
     id: "mackerel",
+    difficulty: 2,
+    traits: ["erratic"],
+    shape: "slim",
     name: "Makrela modrá",
     rarity: "common",
     price: 8,
@@ -49,6 +61,9 @@ const FISH_SPECIES = [
   },
   {
     id: "cod",
+    difficulty: 1,
+    traits: [],
+    shape: "round",
     name: "Treska tmavá",
     rarity: "common",
     price: 10,
@@ -62,6 +77,9 @@ const FISH_SPECIES = [
   },
   {
     id: "flatfish",
+    difficulty: 1,
+    traits: [],
+    shape: "flat",
     name: "Platýs bradavičnatý",
     rarity: "common",
     price: 12,
@@ -75,6 +93,9 @@ const FISH_SPECIES = [
   },
   {
     id: "eel",
+    difficulty: 3,
+    traits: ["reverse"],
+    shape: "eel",
     name: "Úhoř mořský",
     rarity: "uncommon",
     price: 18,
@@ -88,6 +109,9 @@ const FISH_SPECIES = [
   },
   {
     id: "salmon",
+    difficulty: 3,
+    traits: ["erratic"],
+    shape: "slim",
     name: "Losos divoký",
     rarity: "uncommon",
     price: 22,
@@ -101,6 +125,9 @@ const FISH_SPECIES = [
   },
   {
     id: "skate",
+    difficulty: 2,
+    traits: ["drift"],
+    shape: "ray",
     name: "Rejnok ostnatý",
     rarity: "uncommon",
     price: 25,
@@ -114,6 +141,9 @@ const FISH_SPECIES = [
   },
   {
     id: "angler",
+    difficulty: 4,
+    traits: ["drift"],
+    shape: "angler",
     name: "Ďas mořský",
     rarity: "rare",
     price: 45,
@@ -127,6 +157,9 @@ const FISH_SPECIES = [
   },
   {
     id: "gulper",
+    difficulty: 4,
+    traits: ["reverse"],
+    shape: "gulper",
     name: "Šírotlamka hlubinná",
     rarity: "rare",
     price: 55,
@@ -140,6 +173,9 @@ const FISH_SPECIES = [
   },
   {
     id: "aberrant_eye",
+    difficulty: 5,
+    traits: ["drift", "shrink"],
+    shape: "eye",
     name: "Jednooká parma",
     rarity: "aberrant",
     price: 90,
@@ -153,6 +189,9 @@ const FISH_SPECIES = [
   },
   {
     id: "aberrant_tentacle",
+    difficulty: 5,
+    traits: ["reverse", "erratic"],
+    shape: "squid",
     name: "Chapadlovitá makrela",
     rarity: "aberrant",
     price: 110,
@@ -166,6 +205,9 @@ const FISH_SPECIES = [
   },
   {
     id: "aberrant_maw",
+    difficulty: 5,
+    traits: ["erratic", "shrink"],
+    shape: "maw",
     name: "Zubatý škleb",
     rarity: "aberrant",
     price: 140,
@@ -181,6 +223,9 @@ const FISH_SPECIES = [
   // ─── KORÁLOVÝ ÚTES — unikátní druhy ──────────────────────────────
   {
     id: "clownfish",
+    difficulty: 1,
+    traits: ["drift"],
+    shape: "round",
     name: "Klaun korálový",
     rarity: "common",
     price: 14,
@@ -195,6 +240,9 @@ const FISH_SPECIES = [
   },
   {
     id: "parrotfish",
+    difficulty: 2,
+    traits: [],
+    shape: "round",
     name: "Ryba papouščí",
     rarity: "uncommon",
     price: 28,
@@ -209,6 +257,9 @@ const FISH_SPECIES = [
   },
   {
     id: "lionfish",
+    difficulty: 3,
+    traits: ["shrink"],
+    shape: "spiny",
     name: "Ryba lví",
     rarity: "uncommon",
     price: 35,
@@ -223,6 +274,9 @@ const FISH_SPECIES = [
   },
   {
     id: "mantaray",
+    difficulty: 4,
+    traits: ["drift"],
+    shape: "ray",
     name: "Manta obrovská",
     rarity: "rare",
     price: 70,
@@ -237,6 +291,9 @@ const FISH_SPECIES = [
   },
   {
     id: "reef_ghost",
+    difficulty: 4,
+    traits: ["reverse"],
+    shape: "ghost",
     name: "Duch útesu",
     rarity: "rare",
     price: 85,
@@ -251,6 +308,9 @@ const FISH_SPECIES = [
   },
   {
     id: "aberrant_coral",
+    difficulty: 5,
+    traits: ["drift", "shrink"],
+    shape: "coral",
     name: "Korálový přízrak",
     rarity: "aberrant",
     price: 160,
@@ -267,6 +327,9 @@ const FISH_SPECIES = [
   // ─── ROPNÁ VĚŽ — kontaminované vody ──────────────────────────────
   {
     id: "oil_flounder",
+    difficulty: 2,
+    traits: [],
+    shape: "flat",
     name: "Ropný platýs",
     rarity: "common",
     price: 16,
@@ -281,6 +344,9 @@ const FISH_SPECIES = [
   },
   {
     id: "mutant_eel",
+    difficulty: 3,
+    traits: ["reverse"],
+    shape: "eel",
     name: "Mutovaný úhoř",
     rarity: "uncommon",
     price: 32,
@@ -295,6 +361,9 @@ const FISH_SPECIES = [
   },
   {
     id: "drill_squid",
+    difficulty: 4,
+    traits: ["erratic", "drift"],
+    shape: "squid",
     name: "Vrtná chobotnice",
     rarity: "rare",
     price: 75,
@@ -309,6 +378,9 @@ const FISH_SPECIES = [
   },
   {
     id: "oil_wraith",
+    difficulty: 5,
+    traits: ["reverse", "shrink"],
+    shape: "wraith",
     name: "Ropný přízrak",
     rarity: "aberrant",
     price: 175,
