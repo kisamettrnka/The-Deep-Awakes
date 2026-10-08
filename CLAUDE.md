@@ -26,3 +26,7 @@ When changing a JS or CSS file, bump its `?v=N` cache-busting query string in `i
 
 - All player-facing text (UI labels, fish names/descriptions, dialogue) is in **Czech**; code identifiers and comments are in English. The relic-search mechanic is called "Detektor" (formerly "Dredge"/"dredž" — don't reintroduce that term).
 - Fish species are data entries in `FISH_SPECIES` (`id`, `name`, `rarity`: common/uncommon/rare/aberrant, `price`, `depthMin`/`depthMax`, `timeOfDay`; reef species are flagged `reefOnly: true`). Add new fish there rather than in `game.js`.
+
+## Docs
+
+- [docs/claude-code-prirucka.md](docs/claude-code-prirucka.md): Czech handbook for Claude Code setup (plugins, settings, token-saving habits). Read it when the user asks about Claude Code configuration or token usage.
