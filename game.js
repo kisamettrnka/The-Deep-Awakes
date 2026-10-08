@@ -221,6 +221,12 @@ let danger = 0;
 let gameTime = 7.75;
 let dayNum = 12;
 
+// Day/night clock runs on real time, independent of monitor refresh rate.
+// 1 in-game hour = 60 real seconds → full day = 24 minutes.
+const GAME_HOURS_PER_SECOND = 1 / 60;
+let frameDt = 1 / 60;          // seconds since previous frame (clamped)
+let lastFrameTime = performance.now();
+
 const worldWidth = 22000;
 
 const camera = {
@@ -977,7 +983,7 @@ function update() {
 
   camera.x = player.x - canvas.width / 2;
 
-  gameTime += 0.0005;
+  gameTime += GAME_HOURS_PER_SECOND * frameDt;
   if (gameTime >= 24) {
     gameTime -= 24;
     dayNum++;
@@ -1140,14 +1146,8 @@ function drawSky(surfaceY) {
   ctx.fillRect(0, 0, canvas.width, surfaceY);
 
   // 2. Draw Sunset Sky on top
-  let sunsetWeight = 0;
-  if (gameTime >= 4 && gameTime <= 8) {
-    sunsetWeight = 1 - Math.abs((gameTime - 6) / 2); // peak at 6:00
-  } else if (gameTime >= 16 && gameTime <= 20) {
-    sunsetWeight = 1 - Math.abs((gameTime - 18) / 2); // peak at 18:00
-  }
-  sunsetWeight = Math.max(0, Math.min(1, sunsetWeight));
-  
+  const sunsetWeight = getSunsetWeight(); // peaks at 6:00 and 18:00
+
   if (sunsetWeight > 0) {
     ctx.save();
     ctx.globalAlpha = sunsetWeight;
@@ -1451,6 +1451,10 @@ function drawPineForest(surfaceY, parallax, wxOff, count, scale) {
     ctx.fillStyle = "#0a0806";
     ctx.fillRect(sx - 1.5 * scale, groundY - treeH * 0.15, 3 * scale, treeH * 0.15);
 
+    // Wind sway — gusts roll along the treeline, tips move more than the base
+    const now = performance.now() / 1000;
+    const sway = (Math.sin(now * 0.9 + wx * 0.013) + Math.sin(now * 2.3 + wx * 0.05) * 0.35) * treeH * 0.03;
+
     // Pine layers (3-5 triangular tiers)
     const layers = 3 + Math.floor(hash(i * 11 + wxOff) * 2);
     for (let l = 0; l < layers; l++) {
@@ -1461,7 +1465,7 @@ function drawPineForest(surfaceY, parallax, wxOff, count, scale) {
 
       ctx.fillStyle = l % 2 === 0 ? "#080e07" : "#060b05";
       ctx.beginPath();
-      ctx.moveTo(sx, layerBot - layerH);
+      ctx.moveTo(sx + sway * ((l + 1) / layers), layerBot - layerH);
       ctx.lineTo(sx + layerW, layerBot + 3 * scale);
       ctx.lineTo(sx - layerW, layerBot + 3 * scale);
       ctx.closePath();
@@ -1496,9 +1500,28 @@ function drawTownBuildings(surfaceY) {
     ctx.closePath();
     ctx.fill();
 
-    // Lit window
-    const winGlow = 0.3 + hash(i + 2) * 0.55;
-    const flicker = Math.sin(performance.now() * 0.003 + i * 2.7) * 0.08;
+    // Chimney with drifting smoke (stateless puffs)
+    if (hash(i * 17 + 4) > 0.45) {
+      const chx = sx + bw * 0.22;
+      const chy = gy - 6;
+      ctx.fillStyle = "#15100c";
+      ctx.fillRect(chx - 2, chy - 8, 4, 10);
+      const now = performance.now() / 1000;
+      for (let k = 0; k < 6; k++) {
+        const age = (now * 0.12 + k / 6 + hash(i * 3 + 1)) % 1;
+        ctx.fillStyle = `rgba(95,92,96,${(1 - age) * 0.22})`;
+        ctx.beginPath();
+        ctx.arc(chx - age * 26 - age * age * 18, chy - 10 - age * 46, 2 + age * 8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // Windows switch on one by one as dusk falls; a few stay dark all night
+    const dark = 1 - getDaylightFactor();
+    const switchOn = 0.25 + hash(i * 13 + 2) * 0.5;
+    const lit = hash(i * 19 + 8) > 0.2 ? Math.max(0, Math.min(1, (dark - switchOn) * 6)) : 0;
+    const winGlow = 0.12 + lit * (0.3 + hash(i + 2) * 0.5);
+    const flicker = Math.sin(performance.now() * 0.003 + i * 2.7) * 0.08 * lit;
     ctx.fillStyle = `rgba(255,195,110,${winGlow + flicker})`;
     ctx.fillRect(sx - 3, gy + 6, 6, 7);
     if (bw > 22) {
@@ -1506,11 +1529,13 @@ function drawTownBuildings(surfaceY) {
     }
 
     // Window glow halo
-    const wg = ctx.createRadialGradient(sx, gy + 9, 1, sx, gy + 9, 14);
-    wg.addColorStop(0, `rgba(255,190,100,${0.08 + flicker})`);
-    wg.addColorStop(1, "rgba(255,190,100,0)");
-    ctx.fillStyle = wg;
-    ctx.fillRect(sx - 14, gy - 2, 28, 24);
+    if (lit > 0) {
+      const wg = ctx.createRadialGradient(sx, gy + 9, 1, sx, gy + 9, 14);
+      wg.addColorStop(0, `rgba(255,190,100,${(0.08 + flicker) * lit})`);
+      wg.addColorStop(1, "rgba(255,190,100,0)");
+      ctx.fillStyle = wg;
+      ctx.fillRect(sx - 14, gy - 2, 28, 24);
+    }
   }
 }
 
@@ -2938,29 +2963,6 @@ function drawVignette() {
   ctx.restore();
 }
 
-function drawForegroundMist(surfaceY) {
-  // Atmospheric mist at water surface
-  const t = performance.now() * 0.00008;
-  for (let i = 0; i < 5; i++) {
-    const cx = ((i * 400 + t * 60) % (canvas.width + 500)) - 250;
-    const cy = surfaceY + Math.sin(t * 10 + i * 1.5) * 8;
-    const rx = 200 + hash(i * 19) * 150;
-    const ry = 25 + hash(i * 23) * 15;
-    ctx.fillStyle = `rgba(100,115,125,${0.04 + hash(i * 31) * 0.03})`;
-    ctx.beginPath();
-    ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  // Light fog gradient
-  const grad = ctx.createLinearGradient(0, surfaceY - 40, 0, surfaceY + 60);
-  grad.addColorStop(0, "rgba(100,110,120,0)");
-  grad.addColorStop(0.45, "rgba(90,100,110,0.08)");
-  grad.addColorStop(1, "rgba(80,90,100,0)");
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, surfaceY - 50, canvas.width, 120);
-}
-
 // Floating particles in water (marine snow / glowing plankton)
 function drawWaterParticles(surfaceY) {
   const t = performance.now() * 0.001;
@@ -3789,30 +3791,618 @@ function drawRain() {
   ctx.restore();
 }
 
-function drawRollingFog(surfaceY) {
-  const t = performance.now() * 0.0001;
-  const daylight = getDaylightFactor();
-  const opacity = 0.05 + (1 - daylight) * 0.12 + (danger / 12) * 0.15;
-  
+// =====================================================================
+// FOG — layered, tileable fbm noise banks with time-of-day density
+// =====================================================================
+
+const FOG_TEX_W = 1024;
+const FOG_TEX_H = 256;
+let fogTexBase = null;   // white noise bank (alpha only)
+let fogTexTinted = null; // same bank recoloured to the current fog tint
+let fogTintKey = "";
+
+function fogLatticeRand(ix, iy, seed) {
+  const s = Math.sin(ix * 127.1 + iy * 311.7 + seed * 74.7) * 43758.5453;
+  return s - Math.floor(s);
+}
+
+// Value noise that wraps horizontally every `periodX` cells → seamless tiling
+function fogValueNoise(x, y, periodX, seed) {
+  const x0 = Math.floor(x), y0 = Math.floor(y);
+  const fx = x - x0, fy = y - y0;
+  const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+  const xa = ((x0 % periodX) + periodX) % periodX;
+  const xb = (xa + 1) % periodX;
+  const a = fogLatticeRand(xa, y0, seed), b = fogLatticeRand(xb, y0, seed);
+  const c = fogLatticeRand(xa, y0 + 1, seed), d = fogLatticeRand(xb, y0 + 1, seed);
+  return (a + (b - a) * sx) + ((c + (d - c) * sx) - (a + (b - a) * sx)) * sy;
+}
+
+function buildFogTexture() {
+  const c = document.createElement("canvas");
+  c.width = FOG_TEX_W;
+  c.height = FOG_TEX_H;
+  const g = c.getContext("2d");
+  const img = g.createImageData(FOG_TEX_W, FOG_TEX_H);
+  const baseCellsX = 6, baseCellsY = 3;
+  for (let py = 0; py < FOG_TEX_H; py++) {
+    const v = py / FOG_TEX_H;
+    // Soft band: fades out at top and bottom, heavier toward the lower edge
+    const band = Math.pow(Math.sin(Math.PI * v), 1.4) * (0.65 + 0.35 * v);
+    for (let px = 0; px < FOG_TEX_W; px++) {
+      const u = px / FOG_TEX_W;
+      let n = 0, amp = 0.55, total = 0;
+      for (let o = 0; o < 4; o++) {
+        const cellsX = baseCellsX << o;
+        const cellsY = baseCellsY << o;
+        n += fogValueNoise(u * cellsX, v * cellsY, cellsX, o + 1) * amp;
+        total += amp;
+        amp *= 0.5;
+      }
+      n /= total;
+      const a = Math.max(0, Math.min(1, (n - 0.28) * 2.6)) * band;
+      const i = (py * FOG_TEX_W + px) * 4;
+      img.data[i] = 255;
+      img.data[i + 1] = 255;
+      img.data[i + 2] = 255;
+      img.data[i + 3] = Math.round(a * 255);
+    }
+  }
+  g.putImageData(img, 0, 0);
+  fogTexBase = c;
+
+  fogTexTinted = document.createElement("canvas");
+  fogTexTinted.width = FOG_TEX_W;
+  fogTexTinted.height = FOG_TEX_H;
+}
+
+function getSunsetWeight() {
+  let w = 0;
+  if (gameTime >= 4 && gameTime <= 8) w = 1 - Math.abs((gameTime - 6) / 2);
+  else if (gameTime >= 16 && gameTime <= 20) w = 1 - Math.abs((gameTime - 18) / 2);
+  return Math.max(0, Math.min(1, w));
+}
+
+// Fog colour follows the sky: cold blue-grey at night, warm at dusk, pale by day
+function getFogTint() {
+  const day = getDaylightFactor();
+  const sun = getSunsetWeight();
+  // Fog scatters light, so it always sits a little brighter than the ambient sky
+  let r = 70 + (190 - 70) * day;
+  let g = 84 + (196 - 84) * day;
+  let b = 98 + (198 - 98) * day;
+  r += (176 - r) * sun * 0.55;
+  g += (132 - g) * sun * 0.55;
+  b += (122 - b) * sun * 0.55;
+  return { r: Math.round(r), g: Math.round(g), b: Math.round(b) };
+}
+
+// 0..1 — thick at dawn, lighter at noon, rising at night, deeper sea and danger add more
+function getFogDensity() {
+  const h = gameTime;
+  const dawn = Math.exp(-((h - 6.5) ** 2) / (2 * 1.6 * 1.6));
+  const dusk = Math.exp(-((h - 20.5) ** 2) / (2 * 2.2 * 2.2)) * 0.45;
+  const night = (1 - getDaylightFactor()) * 0.3;
+  const deep = Math.max(0, Math.min(1, (Math.abs(player.x) - 3000) / 6000)) * 0.3;
+  const dread = (danger / 12) * 0.35;
+  const breathe = Math.sin(performance.now() * 0.00007) * 0.06;
+  return Math.max(0.12, Math.min(1, 0.2 + dawn * 0.6 + dusk + night + deep + dread + breathe));
+}
+
+function refreshFogTint() {
+  const tint = getFogTint();
+  const key = `${tint.r},${tint.g},${tint.b}`;
+  if (key === fogTintKey) return;
+  fogTintKey = key;
+  const tg = fogTexTinted.getContext("2d");
+  tg.globalCompositeOperation = "source-over";
+  tg.clearRect(0, 0, FOG_TEX_W, FOG_TEX_H);
+  tg.drawImage(fogTexBase, 0, 0);
+  tg.globalCompositeOperation = "source-in";
+  tg.fillStyle = `rgb(${key})`;
+  tg.fillRect(0, 0, FOG_TEX_W, FOG_TEX_H);
+}
+
+// One horizontally tiled fog band. `parallax` ties it to the camera, `wind` drifts it.
+function drawFogBand(centerY, height, tileW, parallax, wind, alpha, flipY) {
+  if (alpha <= 0.005) return;
+  const t = performance.now() / 1000;
+  let off = (camera.x * parallax + t * wind) % tileW;
+  if (off < 0) off += tileW;
   ctx.save();
-  ctx.globalAlpha = opacity;
-  for (let i = 0; i < 4; i++) {
-    const cx = ((i * 500 + t * 40) % (canvas.width + 800)) - 400;
-    const cy = surfaceY + 10 + Math.sin(t * 8 + i * 2) * 15;
-    const rx = 300 + hash(i * 17) * 200;
-    const ry = 40 + hash(i * 23) * 20;
-    
-    const fogGlow = ctx.createRadialGradient(cx, cy, 0, cx, cy, rx);
-    fogGlow.addColorStop(0, "rgba(80,95,105,0.4)");
-    fogGlow.addColorStop(0.5, "rgba(65,80,90,0.15)");
-    fogGlow.addColorStop(1, "rgba(50,60,70,0)");
-    
-    ctx.fillStyle = fogGlow;
-    ctx.beginPath();
-    ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
-    ctx.fill();
+  ctx.globalAlpha = Math.min(1, alpha);
+  const top = centerY - height / 2;
+  for (let x = -off; x < canvas.width; x += tileW) {
+    if (flipY) {
+      ctx.save();
+      ctx.translate(0, top + height);
+      ctx.scale(1, -1);
+      ctx.drawImage(fogTexTinted, x, 0, tileW + 1, height);
+      ctx.restore();
+    } else {
+      ctx.drawImage(fogTexTinted, x, top, tileW + 1, height);
+    }
   }
   ctx.restore();
+}
+
+// "back" = behind the boat (over coast and horizon), "front" = veil in front of everything
+function drawFogLayers(surfaceY, which) {
+  if (!fogTexBase) buildFogTexture();
+  refreshFogTint();
+  const d = getFogDensity();
+  const w = canvas.width;
+
+  if (which === "back") {
+    // Far bank hugging the coastline
+    drawFogBand(surfaceY - 60, 150 + d * 110, w * 1.6, 0.18, 6, 0.3 + d * 0.7, false);
+    // Mid bank resting on the water line
+    drawFogBand(surfaceY - 6, 100 + d * 60, w * 1.3, 0.45, 14, 0.2 + d * 0.8, true);
+  } else {
+    // Low wisps drifting past in the foreground — keep the boat readable
+    drawFogBand(surfaceY + 4, 80 + d * 50, w * 1.1, 1.05, 26, d * 0.55, false);
+    // Thin haze over the air and surface when fog is heavy — the deep stays dark
+    if (d > 0.35) {
+      const tint = getFogTint();
+      const a = (d - 0.35) * 0.2;
+      const haze = ctx.createLinearGradient(0, 0, 0, surfaceY + 120);
+      haze.addColorStop(0, `rgba(${tint.r},${tint.g},${tint.b},${a * 0.6})`);
+      haze.addColorStop(0.75, `rgba(${tint.r},${tint.g},${tint.b},${a})`);
+      haze.addColorStop(1, `rgba(${tint.r},${tint.g},${tint.b},0)`);
+      ctx.fillStyle = haze;
+      ctx.fillRect(0, 0, w, surfaceY + 120);
+    }
+  }
+}
+
+// =====================================================================
+// BACKGROUND LIFE — gulls, passing ships
+// =====================================================================
+
+const gulls = [];
+for (let i = 0; i < 9; i++) {
+  gulls.push({
+    x: hash(i * 91 + 5) * 3000,
+    yRatio: 0.18 + hash(i * 57 + 3) * 0.5,
+    speed: 18 + hash(i * 13 + 7) * 26,       // px/s across the sky
+    dir: hash(i * 29) > 0.4 ? 1 : -1,
+    size: 5 + hash(i * 41) * 5,
+    phase: hash(i * 77) * 10,
+    flapRate: 6 + hash(i * 61) * 4
+  });
+}
+
+function drawGulls(surfaceY) {
+  const day = getDaylightFactor();
+  const vis = Math.max(0, Math.min(1, (day - 0.15) * 2));
+  if (vis <= 0) return;
+  const t = performance.now() / 1000;
+  const span = canvas.width + 200;
+  ctx.save();
+  ctx.lineCap = "round";
+  gulls.forEach((g) => {
+    g.x += g.speed * g.dir * frameDt;
+    let sx = (g.x - camera.x * 0.35) % span;
+    if (sx < 0) sx += span;
+    sx -= 100;
+    const sy = surfaceY * g.yRatio + Math.sin(t * 0.5 + g.phase) * 8;
+    // Flap in bursts, then glide
+    const gliding = Math.sin(t * 0.35 + g.phase) > 0.3;
+    const flap = gliding ? 0.25 : Math.sin(t * g.flapRate + g.phase);
+    const s = g.size;
+    ctx.strokeStyle = `rgba(20,22,28,${0.75 * vis})`;
+    ctx.lineWidth = Math.max(1, s * 0.22);
+    ctx.beginPath();
+    ctx.moveTo(sx - s, sy - flap * s * 0.55);
+    ctx.quadraticCurveTo(sx - s * 0.45, sy - s * 0.35 - flap * s * 0.2, sx, sy);
+    ctx.quadraticCurveTo(sx + s * 0.45, sy - s * 0.35 - flap * s * 0.2, sx + s, sy - flap * s * 0.55);
+    ctx.stroke();
+  });
+  ctx.restore();
+}
+
+// --- NPC ships: several hull types, sailing at different depths of field ---
+
+const NPC_BOAT_MODELS = ["rowboat", "sailboat", "trawler", "steamer", "skiff"];
+const NPC_BOAT_SPEED = { rowboat: 9, sailboat: 16, trawler: 12, steamer: 10, skiff: 34 };
+const npcBoats = [];
+for (let i = 0; i < 8; i++) {
+  const model = NPC_BOAT_MODELS[i % NPC_BOAT_MODELS.length];
+  const depth = hash(i * 37 + 11);               // 0 = far, 1 = near
+  npcBoats.push({
+    model,
+    x: hash(i * 53 + 2) * 4000,
+    depth,
+    parallax: 0.3 + depth * 0.35,
+    scale: 0.26 + depth * 0.3,
+    dir: hash(i * 71 + 9) > 0.5 ? 1 : -1,
+    speed: NPC_BOAT_SPEED[model] * (0.8 + hash(i * 19) * 0.4),
+    phase: hash(i * 23) * 10
+  });
+}
+npcBoats.sort((a, b) => a.depth - b.depth); // far first
+
+// Colour helper: mixes a model colour toward the fog tint by the current haze amount
+let npcHaze = { r: 0, g: 0, b: 0, k: 0 };
+function hc(r, g, b, a = 1) {
+  const k = npcHaze.k;
+  return `rgba(${Math.round(r + (npcHaze.r - r) * k)},${Math.round(g + (npcHaze.g - g) * k)},${Math.round(b + (npcHaze.b - b) * k)},${a})`;
+}
+
+function npcWindowLight(night, a = 1) {
+  return `rgba(255,${Math.round(200 - npcHaze.k * 40)},${Math.round(120 - npcHaze.k * 30)},${(0.15 + night * 0.8) * a})`;
+}
+
+function drawNpcGlow(x, y, r, night) {
+  if (night < 0.25) return;
+  const gl = ctx.createRadialGradient(x, y, 0, x, y, r);
+  gl.addColorStop(0, `rgba(255,205,130,${0.4 * night})`);
+  gl.addColorStop(1, "rgba(255,205,130,0)");
+  ctx.fillStyle = gl;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+// All models: facing right, waterline at y = 0, origin at mid-hull.
+
+function drawNpcRowboat(t, night) {
+  ctx.fillStyle = hc(92, 62, 40);
+  ctx.beginPath();
+  ctx.moveTo(-34, -9);
+  ctx.lineTo(36, -12);
+  ctx.quadraticCurveTo(31, 3, 18, 6);
+  ctx.lineTo(-27, 6);
+  ctx.quadraticCurveTo(-34, 2, -34, -9);
+  ctx.fill();
+  ctx.strokeStyle = hc(140, 104, 70);
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(-34, -9);
+  ctx.lineTo(36, -12);
+  ctx.stroke();
+  // Rower
+  ctx.fillStyle = hc(60, 70, 62);
+  ctx.fillRect(-6, -26, 10, 16);
+  ctx.fillStyle = hc(170, 140, 115);
+  ctx.beginPath();
+  ctx.arc(-1, -30, 4.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = hc(150, 120, 40);
+  ctx.fillRect(-7, -35, 12, 3);
+  // Oar sweeping through the water
+  const a = Math.sin(t * 2.2) * 0.55;
+  ctx.strokeStyle = hc(120, 90, 60);
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(-1, -18);
+  ctx.lineTo(-1 + Math.cos(2.2 + a) * 34, -18 + Math.sin(2.2 + a) * 30);
+  ctx.stroke();
+  // Stern lantern
+  ctx.strokeStyle = hc(40, 32, 26);
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(-30, -9);
+  ctx.lineTo(-30, -30);
+  ctx.stroke();
+  ctx.fillStyle = npcWindowLight(night);
+  ctx.beginPath();
+  ctx.arc(-30, -32, 2.5, 0, Math.PI * 2);
+  ctx.fill();
+  drawNpcGlow(-30, -32, 18, night);
+}
+
+function drawNpcSailboat(t, night) {
+  // Hull
+  ctx.fillStyle = hc(196, 190, 176);
+  ctx.beginPath();
+  ctx.moveTo(-52, -12);
+  ctx.lineTo(58, -14);
+  ctx.quadraticCurveTo(50, 2, 34, 7);
+  ctx.lineTo(-44, 7);
+  ctx.quadraticCurveTo(-54, 0, -52, -12);
+  ctx.fill();
+  ctx.fillStyle = hc(36, 58, 86);
+  ctx.fillRect(-48, -6, 98, 3);
+  // Small cabin
+  ctx.fillStyle = hc(176, 168, 150);
+  ctx.fillRect(-22, -22, 30, 10);
+  ctx.fillStyle = npcWindowLight(night);
+  ctx.fillRect(-16, -19, 5, 4);
+  ctx.fillRect(-6, -19, 5, 4);
+  // Mast + boom
+  ctx.strokeStyle = hc(70, 60, 50);
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(4, -14);
+  ctx.lineTo(4, -118);
+  ctx.moveTo(4, -24);
+  ctx.lineTo(-46, -22);
+  ctx.stroke();
+  // Sails with a slow belly in the wind
+  const belly = 6 + Math.sin(t * 0.9) * 3;
+  ctx.fillStyle = hc(214, 204, 182, 0.95);
+  ctx.beginPath();
+  ctx.moveTo(2, -112);
+  ctx.quadraticCurveTo(-26 - belly, -64, -44, -25);
+  ctx.lineTo(2, -26);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = hc(200, 190, 170, 0.92);
+  ctx.beginPath();
+  ctx.moveTo(7, -108);
+  ctx.quadraticCurveTo(34 + belly, -58, 56, -16);
+  ctx.lineTo(8, -18);
+  ctx.closePath();
+  ctx.fill();
+  // Pennant
+  const f = Math.sin(t * 6) * 2;
+  ctx.fillStyle = hc(150, 40, 40);
+  ctx.beginPath();
+  ctx.moveTo(4, -118);
+  ctx.lineTo(-12, -115 + f);
+  ctx.lineTo(4, -112);
+  ctx.fill();
+  // Masthead light
+  ctx.fillStyle = `rgba(255,255,240,${0.2 + night * 0.8})`;
+  ctx.beginPath();
+  ctx.arc(4, -120, 2, 0, Math.PI * 2);
+  ctx.fill();
+  drawNpcGlow(4, -120, 14, night);
+}
+
+function drawNpcTrawler(t, night) {
+  // Hull
+  ctx.fillStyle = hc(38, 58, 76);
+  ctx.beginPath();
+  ctx.moveTo(-74, -16);
+  ctx.lineTo(70, -20);
+  ctx.quadraticCurveTo(80, -18, 82, -10);
+  ctx.quadraticCurveTo(70, 6, 50, 9);
+  ctx.lineTo(-64, 9);
+  ctx.quadraticCurveTo(-74, 2, -74, -16);
+  ctx.fill();
+  ctx.fillStyle = hc(120, 36, 30);
+  ctx.fillRect(-70, -2, 140, 4);
+  ctx.fillStyle = hc(190, 184, 170);
+  ctx.fillRect(-72, -18, 148, 3);
+  // Wheelhouse (forward)
+  ctx.fillStyle = hc(186, 178, 160);
+  ctx.fillRect(18, -50, 40, 32);
+  ctx.fillStyle = hc(40, 34, 30);
+  ctx.fillRect(14, -54, 48, 5);
+  ctx.fillStyle = npcWindowLight(night);
+  for (let k = 0; k < 3; k++) ctx.fillRect(24 + k * 11, -44, 7, 8);
+  drawNpcGlow(38, -40, 30, night * 0.7);
+  // Main mast + aft gantry
+  ctx.strokeStyle = hc(55, 48, 42);
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(-10, -18);
+  ctx.lineTo(-10, -96);
+  ctx.moveTo(-62, -18);
+  ctx.lineTo(-56, -58);
+  ctx.lineTo(-44, -18);
+  ctx.stroke();
+  // Outrigger booms, slowly rocking
+  const rock = Math.sin(t * 0.8) * 0.06;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(-10, -60);
+  ctx.lineTo(-10 - Math.cos(0.75 + rock) * 60, -60 - Math.sin(0.75 + rock) * 46);
+  ctx.moveTo(-10, -60);
+  ctx.lineTo(-10 + Math.cos(0.75 - rock) * 60, -60 - Math.sin(0.75 - rock) * 46);
+  ctx.stroke();
+  // Rigging
+  ctx.strokeStyle = hc(80, 74, 66, 0.7);
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(-10, -96);
+  ctx.lineTo(80, -20);
+  ctx.moveTo(-10, -96);
+  ctx.lineTo(-72, -18);
+  ctx.moveTo(-56, -58);
+  ctx.lineTo(-62, -6);
+  ctx.stroke();
+  // Hanging net
+  ctx.strokeStyle = hc(110, 120, 90, 0.8);
+  ctx.beginPath();
+  ctx.moveTo(-56, -56);
+  ctx.quadraticCurveTo(-70, -30, -64, -6);
+  ctx.stroke();
+  // Deck work light
+  ctx.fillStyle = `rgba(255,240,200,${0.25 + night * 0.75})`;
+  ctx.beginPath();
+  ctx.arc(-10, -98, 2.5, 0, Math.PI * 2);
+  ctx.fill();
+  drawNpcGlow(-10, -98, 22, night);
+}
+
+function drawNpcSteamer(t, night) {
+  // Long hull
+  ctx.fillStyle = hc(30, 28, 32);
+  ctx.beginPath();
+  ctx.moveTo(-112, -22);
+  ctx.lineTo(108, -26);
+  ctx.quadraticCurveTo(118, -22, 120, -14);
+  ctx.quadraticCurveTo(108, 6, 88, 10);
+  ctx.lineTo(-104, 10);
+  ctx.quadraticCurveTo(-114, 2, -112, -22);
+  ctx.fill();
+  ctx.fillStyle = hc(110, 32, 28);
+  ctx.fillRect(-108, 0, 210, 5);
+  // Portholes
+  ctx.fillStyle = npcWindowLight(night, 0.9);
+  for (let k = 0; k < 9; k++) {
+    ctx.beginPath();
+    ctx.arc(-88 + k * 22, -12, 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Cargo hatches
+  ctx.fillStyle = hc(70, 58, 46);
+  ctx.fillRect(-18, -34, 30, 9);
+  ctx.fillRect(28, -34, 30, 9);
+  ctx.fillRect(70, -34, 24, 9);
+  // Aft superstructure
+  ctx.fillStyle = hc(178, 172, 160);
+  ctx.fillRect(-96, -58, 58, 34);
+  ctx.fillRect(-88, -74, 40, 16);
+  ctx.fillStyle = npcWindowLight(night);
+  for (let k = 0; k < 5; k++) ctx.fillRect(-90 + k * 10, -48, 6, 6);
+  for (let k = 0; k < 3; k++) ctx.fillRect(-82 + k * 11, -70, 7, 6);
+  drawNpcGlow(-66, -52, 40, night * 0.6);
+  // Funnel with red band
+  ctx.fillStyle = hc(40, 36, 36);
+  ctx.fillRect(-64, -104, 16, 32);
+  ctx.fillStyle = hc(140, 36, 30);
+  ctx.fillRect(-64, -96, 16, 6);
+  // Funnel smoke (stateless puffs)
+  for (let k = 0; k < 7; k++) {
+    const age = (t * 0.22 + k / 7) % 1;
+    const px = -56 - age * 70 - age * age * 30;
+    const py = -108 - age * 60;
+    ctx.fillStyle = hc(70, 70, 74, (1 - age) * 0.35);
+    ctx.beginPath();
+    ctx.arc(px, py, 4 + age * 14, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Fore mast + derrick
+  ctx.strokeStyle = hc(60, 52, 46);
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(84, -26);
+  ctx.lineTo(84, -92);
+  ctx.moveTo(84, -70);
+  ctx.lineTo(50, -38);
+  ctx.moveTo(10, -26);
+  ctx.lineTo(10, -78);
+  ctx.moveTo(10, -60);
+  ctx.lineTo(40, -36);
+  ctx.stroke();
+  ctx.strokeStyle = hc(80, 74, 66, 0.6);
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(84, -92);
+  ctx.lineTo(118, -24);
+  ctx.moveTo(84, -92);
+  ctx.lineTo(10, -78);
+  ctx.lineTo(-48, -104);
+  ctx.stroke();
+  // Navigation lights
+  ctx.fillStyle = `rgba(255,250,235,${0.25 + night * 0.75})`;
+  ctx.beginPath();
+  ctx.arc(84, -94, 2.5, 0, Math.PI * 2);
+  ctx.fill();
+  drawNpcGlow(84, -94, 20, night);
+  ctx.fillStyle = `rgba(90,255,140,${0.2 + night * 0.7})`;
+  ctx.beginPath();
+  ctx.arc(110, -30, 2, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawNpcSkiff(t, night) {
+  // Sleek planing hull, bow lifted
+  ctx.save();
+  ctx.rotate(-0.04);
+  ctx.fillStyle = hc(160, 166, 170);
+  ctx.beginPath();
+  ctx.moveTo(-40, -12);
+  ctx.lineTo(42, -14);
+  ctx.quadraticCurveTo(50, -10, 46, -4);
+  ctx.quadraticCurveTo(30, 5, 10, 6);
+  ctx.lineTo(-38, 6);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = hc(150, 110, 40);
+  ctx.fillRect(-38, -6, 82, 3);
+  // Console + windscreen
+  ctx.fillStyle = hc(60, 66, 72);
+  ctx.fillRect(-6, -26, 18, 14);
+  ctx.fillStyle = hc(140, 170, 190, 0.6);
+  ctx.beginPath();
+  ctx.moveTo(12, -26);
+  ctx.lineTo(18, -16);
+  ctx.lineTo(12, -16);
+  ctx.fill();
+  // Pilot
+  ctx.fillStyle = hc(140, 60, 40);
+  ctx.fillRect(-16, -28, 8, 14);
+  ctx.fillStyle = hc(170, 140, 115);
+  ctx.beginPath();
+  ctx.arc(-12, -31, 4, 0, Math.PI * 2);
+  ctx.fill();
+  // Outboard motor
+  ctx.fillStyle = hc(30, 30, 34);
+  ctx.fillRect(-46, -16, 8, 14);
+  // Antenna
+  ctx.strokeStyle = hc(50, 50, 55);
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(4, -26);
+  ctx.lineTo(0, -52);
+  ctx.stroke();
+  ctx.fillStyle = `rgba(255,80,60,${0.3 + night * 0.7 * (Math.sin(t * 5) > 0 ? 1 : 0.3)})`;
+  ctx.beginPath();
+  ctx.arc(0, -53, 1.8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+const NPC_DRAWERS = {
+  rowboat: drawNpcRowboat,
+  sailboat: drawNpcSailboat,
+  trawler: drawNpcTrawler,
+  steamer: drawNpcSteamer,
+  skiff: drawNpcSkiff
+};
+
+function drawNpcWake(len, speedFactor, alpha) {
+  ctx.strokeStyle = `rgba(210,225,235,${alpha})`;
+  ctx.lineWidth = 1.5;
+  const t = performance.now() * 0.004;
+  for (let k = 0; k < 4; k++) {
+    const x0 = -len * 0.5 - k * 14 * speedFactor;
+    const w = 10 + k * 8 * speedFactor;
+    ctx.beginPath();
+    ctx.moveTo(x0, 2 + Math.sin(t + k) * 0.8);
+    ctx.lineTo(x0 - w, 3 + k * 0.6);
+    ctx.stroke();
+  }
+}
+
+const NPC_HULL_LEN = { rowboat: 70, sailboat: 110, trawler: 156, steamer: 232, skiff: 90 };
+
+function drawNpcBoats(surfaceY) {
+  const t = performance.now() / 1000;
+  const night = 1 - getDaylightFactor();
+  const tint = getFogTint();
+  const fog = getFogDensity();
+  const span = canvas.width + 700;
+
+  npcBoats.forEach((b) => {
+    b.x += b.speed * b.dir * frameDt;
+    let sx = (b.x - camera.x * b.parallax) % span;
+    if (sx < 0) sx += span;
+    sx -= 350;
+    const len = NPC_HULL_LEN[b.model] * b.scale;
+    if (sx < -len || sx > canvas.width + len) return;
+
+    // Far boats dissolve into the fog; at night they turn into silhouettes
+    npcHaze = {
+      r: tint.r, g: tint.g, b: tint.b,
+      k: Math.min(0.88, (1 - b.depth) * 0.45 + fog * 0.35 + night * 0.2)
+    };
+
+    const bob = Math.sin(t * 1.4 + b.phase) * 1.6 * b.scale * 2;
+    const roll = Math.sin(t * 1.1 + b.phase * 1.3) * 0.025;
+    ctx.save();
+    ctx.translate(sx, surfaceY + 2 + bob);
+    ctx.rotate(roll);
+    ctx.scale(b.scale * b.dir, b.scale);
+    drawNpcWake(NPC_HULL_LEN[b.model], b.speed / 15, 0.12 + b.depth * 0.12);
+    NPC_DRAWERS[b.model](t + b.phase, night);
+    ctx.restore();
+  });
 }
 
 // =====================================================================
@@ -3821,6 +4411,10 @@ function drawRollingFog(surfaceY) {
 
 function gameLoop() {
   const surfaceY = getSurfaceY();
+
+  const nowMs = performance.now();
+  frameDt = Math.min(0.1, (nowMs - lastFrameTime) / 1000);
+  lastFrameTime = nowMs;
 
   updateScreenShake();
   updateRain();
@@ -3884,6 +4478,8 @@ function gameLoop() {
   // === SKY ===
   drawSky(surfaceY);
 
+  drawGulls(surfaceY);
+
   // === BACKGROUND COAST (far) ===
   drawRockyCoast(surfaceY, 0.12, 15, false);
   drawPineForest(surfaceY, 0.15, 300, 18, 0.8);
@@ -3896,7 +4492,8 @@ function gameLoop() {
   // === DOCK STRUCTURE ===
   drawDockStructure(surfaceY);
   drawOilRig(surfaceY);
-  drawRollingFog(surfaceY);
+  drawNpcBoats(surfaceY);
+  drawFogLayers(surfaceY, "back");
 
   // === WATER SURFACE ===
   drawWaterSurface(surfaceY);
@@ -4004,8 +4601,7 @@ function gameLoop() {
   });
 
   // === ATMOSPHERIC EFFECTS ===
-  drawForegroundMist(surfaceY);
-  drawRollingFog(surfaceY);
+  drawFogLayers(surfaceY, "front");
   drawRain();
   drawVignette();
 
