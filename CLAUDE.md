@@ -28,6 +28,7 @@ When changing a JS or CSS file, bump its `?v=N` cache-busting query string in `i
 
 - All player-facing text (UI labels, fish names/descriptions, dialogue) is in **Czech**; code identifiers and comments are in English. The relic-search mechanic is called "Detektor" (formerly "Dredge"/"dredž" — don't reintroduce that term).
 - Fish species are data entries in `FISH_SPECIES` (`id`, `name`, `rarity`: common/uncommon/rare/aberrant, `weight` range in kg with optional `priceMult`, `difficulty`/`traits`/`shape` for the fishing minigame, `depthMin`/`depthMax`, `timeOfDay`; reef species are flagged `reefOnly: true`). Each catch is an instance from `makeCaughtFish()` with its own weight and price. Add new fish there rather than in `game.js`.
+- Player messages: `triggerDialogue()` pauses the game (story beats, warnings that need reading); `showToast(text, rgb)` is a short non-blocking note for in-play events (attacks, finished contracts, spoiling catch).
 - Sound is procedural WebAudio (no audio files): ambient loops are updated in `updateSound()`, one-shot cues are `play*()` helpers built on `sfxTone`/`sfxNoise`.
 
 ## Docs

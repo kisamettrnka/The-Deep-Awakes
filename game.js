@@ -1493,6 +1493,7 @@ function endFishingSuccess() {
   // Add to inventory
   inventory.push(caught);
   recordCatchInJournal(caught);
+  caught.caughtAt = absoluteHours();
   if (activeFishingSpot) activeFishingSpot.stock = Math.max(0, activeFishingSpot.stock - 1);
   caughtFish = inventory.length;
 
@@ -2064,6 +2065,9 @@ function update() {
     // Once the curse is broken the sea is gentler
     if (gameWon) dangerIncrease *= 0.5;
 
+    // Under the lighthouse's beam the mind settles
+    if (nearLighthouse()) dangerIncrease = Math.min(dangerIncrease, 0) - 0.25;
+
     // Scale down by hull upgrade resistance
     const hullResist = upgrades.hull;
     danger += dangerIncrease / hullResist;
@@ -2079,8 +2083,11 @@ function update() {
     }
   }
 
+  updateAttacks(frameDt);
+  updateFreshness(frameDt);
+
   // Smoke particle update
-  const bob = boatBob();
+const bob = boatBob();
   const sternDir = boatFacing < 0 ? 1 : -1;
   const exhaustWx = player.x + 22 * sternDir;
   const exhaustWy = getSurfaceY() - 8 + bob - 68;
@@ -5243,6 +5250,7 @@ function openDockMenu() {
 
   // Decrease danger level
   addDanger(-4);
+  renderContracts();
   saveGame();
 }
 
@@ -5353,7 +5361,7 @@ function updateMarketUI() {
   let totalVal = 0;
 
   inventory.forEach(f => {
-    totalVal += f.price;
+    totalVal += fishValue(f);
     if (f.reefOnly) {
       reef++;
     } else if (f.rarity === "common")   { common++;   }
@@ -5367,6 +5375,14 @@ function updateMarketUI() {
   document.getElementById("market-rare-count").textContent     = `${rare}x`;
   document.getElementById("market-aberrant-count").textContent = `${aberrant}x`;
   document.getElementById("market-sell-value").textContent     = totalVal;
+
+  // Contracts this load would complete
+  let bonus = 0;
+  contracts.forEach((c) => {
+    if (c.done + inventory.filter((f) => f.id === c.speciesId).length >= c.count) bonus += c.reward;
+  });
+  const bonusEl = document.getElementById("market-contract-bonus");
+  if (bonusEl) bonusEl.textContent = `$${bonus}`;
 
   const reefCountEl = document.getElementById("market-reef-count");
   const reefRowEl   = document.getElementById("market-reef-row");
@@ -5389,11 +5405,12 @@ function sellAllFish() {
   let totalVal = 0;
   let totalKg = 0;
   inventory.forEach(f => {
-    totalVal += f.price;
+    totalVal += fishValue(f);
     totalKg += f.weight || 0;
   });
-  
-  gold += totalVal;
+  const bonus = settleContracts(inventory);
+
+  gold += totalVal + bonus;
   playCoins();
   saveGame();
   if (goldUI) goldUI.innerText = gold;
@@ -5407,7 +5424,7 @@ function sellAllFish() {
   updateMarketUI();
   
   if (marketResultEl) {
-    marketResultEl.textContent = `Prodáno ${count} ryb (${formatKg(totalKg)}) za $${totalVal}!`;
+    marketResultEl.textContent = `Prodáno ${count} ryb (${formatKg(totalKg)}) za $${totalVal}` + (bonus ? ` + zakázky $${bonus}!` : "!");
     marketResultEl.className = "market-result ok";
     marketResultEl.classList.remove("hidden");
   }
@@ -5576,7 +5593,9 @@ function updateInventoryUI() {
     if (i < inventory.length) {
       const fish = inventory[i];
       slotEl.classList.add(`rarity-${fish.rarity}`);
-      
+      const fresh = fishFreshness(fish);
+      slotEl.classList.add(`freshness-${fresh.key}`);
+
       const iconEl = document.createElement("span");
       iconEl.className = "fish-icon";
       iconEl.textContent = fish.icon || "🐟";
@@ -5593,7 +5612,7 @@ function updateInventoryUI() {
       tooltipEl.innerHTML = `
         <strong>${fish.name}</strong><br>
         <span style="color:#a89878; font-size:0.75rem;">${rarityText}${fish.weight ? " · " + formatKg(fish.weight) : ""}</span><br>
-        <span style="color:#d8cbb0;">$${fish.price}</span>
+        <span class="fresh-label fresh-${fresh.key}">${fresh.label}</span> · <span style="color:#d8cbb0;">$${fishValue(fish)}</span>
       `;
       slotEl.appendChild(tooltipEl);
     } else {
@@ -5737,6 +5756,10 @@ function restartGame() {
   rodUpgrades.bait = 1;
   gameWon = false;
   reefWarnedEntry = false;
+  contracts = [];
+  ensureContracts();
+  attackTimer = 30;
+  attackFlash = 0;
   lightning.t = 99;
   bioWake.length = 0;
   rainRipples.length = 0;
@@ -6959,7 +6982,8 @@ function saveGame() {
   const data = {
     v: 1,
     gold,
-    inventory: inventory.map((f) => ({ id: f.id, weight: f.weight })),
+    inventory: inventory.map((f) => ({ id: f.id, weight: f.weight, caughtAt: f.caughtAt })),
+    contracts,
     upgrades: { ...upgrades },
     rodUpgrades: { ...rodUpgrades },
     battery,
@@ -6998,7 +7022,10 @@ function loadGame() {
   inventory = (data.inventory || [])
     .map((it) => {
       const sp = FISH_SPECIES.find((f) => f.id === it.id);
-      return sp ? makeCaughtFish(sp, it.weight) : null;
+      if (!sp) return null;
+      const f = makeCaughtFish(sp, it.weight);
+      f.caughtAt = it.caughtAt;
+      return f;
     })
     .filter(Boolean);
   caughtFish = inventory.length;
@@ -7032,6 +7059,8 @@ function loadGame() {
   batteryRechargeKitOwned = !!data.kitOwned;
   batteryRechargesLeft = data.kitLeft | 0;
   fishJournal = data.journal || {};
+  contracts = Array.isArray(data.contracts) ? data.contracts.filter((c) => speciesById(c.speciesId)) : [];
+  ensureContracts();
   firstFishCaught = !!data.firstFishCaught;
   dangerThresh3 = !!data.dangerThresh3;
 
@@ -7055,6 +7084,210 @@ function startNewGame() {
 }
 
 window.addEventListener("beforeunload", saveGame);
+
+// =====================================================================
+// GAMEPLAY PRESSURE — freshness of the catch, harbour contracts,
+// attacks from the deep, the lighthouse as a sanctuary, toasts.
+// =====================================================================
+
+// Fish keep their full price for a while, then go stale, then rot (in game hours)
+const FRESH_HOURS = 10;
+const STALE_HOURS = 20;
+const STALE_MULT = 0.65;
+const ROTTEN_MULT = 0.25;
+const CONTRACT_SLOTS = 3;
+const LIGHTHOUSE_SAFE_RADIUS = 600;
+
+let contracts = [];          // { speciesId, count, done, reward }
+let attackTimer = 30;        // seconds until the deep may strike again
+let attackFlash = 0;         // red flash after a hit, 1 → 0
+let freshnessTimer = 0;
+
+function absoluteHours() {
+  return dayNum * 24 + gameTime;
+}
+
+function fishAgeHours(f) {
+  return f.caughtAt == null ? 0 : Math.max(0, absoluteHours() - f.caughtAt);
+}
+
+function fishFreshness(f) {
+  const age = fishAgeHours(f);
+  if (age < FRESH_HOURS) return { key: "fresh", label: "Čerstvá", mult: 1 };
+  if (age < STALE_HOURS) return { key: "stale", label: "Odležená", mult: STALE_MULT };
+  return { key: "rotten", label: "Zkažená", mult: ROTTEN_MULT };
+}
+
+// What a fish in the hold sells for right now
+function fishValue(f) {
+  return Math.max(1, Math.round(f.price * fishFreshness(f).mult));
+}
+
+// Warn once per fish when the hold starts to smell
+function updateFreshness(dt) {
+  freshnessTimer += dt;
+  if (freshnessTimer < 1) return;
+  freshnessTimer = 0;
+  let turned = 0;
+  inventory.forEach((f) => {
+    const k = fishFreshness(f).key;
+    if (k !== "fresh" && f.lastFreshness !== k) {
+      f.lastFreshness = k;
+      turned++;
+    }
+  });
+  if (turned > 0) {
+    showToast("Úlovek v podpalubí ztrácí čerstvost — prodej ho v přístavu.", "230,190,110");
+    if (inventoryOpen) updateInventoryUI();
+  }
+}
+
+// --- Harbour contracts ---
+
+function speciesAvgPrice(sp) {
+  const [lo, hi] = sp.weight || [1, 2];
+  return ((lo + hi) / 2) * FISH_PRICE_PER_KG * (sp.priceMult || 1);
+}
+
+function makeContract() {
+  const taken = new Set(contracts.map((c) => c.speciesId));
+  // Mostly everyday catches, sometimes something rarer
+  const roll = Math.random();
+  const rarity = roll < 0.5 ? "common" : roll < 0.85 ? "uncommon" : "rare";
+  let pool = FISH_SPECIES.filter((f) => f.rarity === rarity && !taken.has(f.id));
+  if (!pool.length) pool = FISH_SPECIES.filter((f) => f.rarity !== "aberrant" && !taken.has(f.id));
+  const sp = pool[Math.floor(Math.random() * pool.length)];
+  const count = rarity === "rare" ? 1 : 1 + Math.floor(Math.random() * 3);
+  const reward = Math.round((speciesAvgPrice(sp) * count * 1.6 + 20) / 5) * 5;
+  return { speciesId: sp.id, count, done: 0, reward };
+}
+
+function ensureContracts() {
+  while (contracts.length < CONTRACT_SLOTS) contracts.push(makeContract());
+}
+
+function speciesById(id) {
+  return FISH_SPECIES.find((f) => f.id === id);
+}
+
+function renderContracts() {
+  const list = document.getElementById("contracts-list");
+  if (!list) return;
+  ensureContracts();
+  list.innerHTML = "";
+  contracts.forEach((c) => {
+    const sp = speciesById(c.speciesId);
+    if (!sp) return;
+    const have = inventory.filter((f) => f.id === c.speciesId).length;
+    const row = document.createElement("div");
+    row.className = "contract-row" + (have + c.done >= c.count ? " ready" : "");
+    const where = sp.reefOnly ? "útes" : sp.oilOnly ? "ropná věž" : "moře";
+    const when = sp.timeOfDay === "night" ? ", v noci" : sp.timeOfDay === "day" ? ", ve dne" : "";
+    row.innerHTML = `
+      <span class="contract-name">${sp.name}</span>
+      <span class="contract-meta">${where}${when}</span>
+      <span class="contract-progress">${Math.min(c.count, c.done + have)} / ${c.count}</span>
+      <span class="contract-reward">+$${c.reward}</span>`;
+    list.appendChild(row);
+  });
+}
+
+// Selling counts toward contracts; returns the bonus earned
+function settleContracts(sold) {
+  let bonus = 0;
+  const finished = [];
+  contracts.forEach((c) => {
+    const matching = sold.filter((f) => f.id === c.speciesId).length;
+    c.done = Math.min(c.count, c.done + matching);
+    if (c.done >= c.count) {
+      bonus += c.reward;
+      finished.push(c);
+    }
+  });
+  if (finished.length) {
+    contracts = contracts.filter((c) => !finished.includes(c));
+    ensureContracts();
+    const names = finished.map((c) => speciesById(c.speciesId).name).join(", ");
+    showToast(`Zakázka splněna: ${names} (+$${bonus})`, "140,230,160");
+  }
+  return bonus;
+}
+
+// --- Attacks from the deep ---
+
+function updateAttacks(dt) {
+  attackFlash = Math.max(0, attackFlash - dt * 1.6);
+  if (danger < 8 || (gameWon && danger < 10)) {
+    attackTimer = Math.max(attackTimer, 18);
+    return;
+  }
+  attackTimer -= dt;
+  if (attackTimer > 0) return;
+  attackTimer = 25 + Math.random() * 25 - (danger - 8) * 3;
+
+  // The headlight keeps it at a distance half of the time
+  if (headlight.on && Math.random() < 0.5) {
+    showToast("Ve světle se cosi mihlo a zmizelo v hlubině…", "190,215,255");
+    return;
+  }
+
+  triggerScreenShake(18);
+  attackFlash = 1;
+  playThud();
+
+  // A stronger hull shrugs some hits off
+  if (Math.random() < (upgrades.hull - 1) * 0.18) {
+    showToast("Něco udeřilo do trupu — ale trup vydržel.", "230,190,110");
+    return;
+  }
+  if (inventory.length) {
+    const idx = Math.floor(Math.random() * inventory.length);
+    const lost = inventory.splice(idx, 1)[0];
+    caughtFish = inventory.length;
+    if (fishUI) fishUI.innerText = caughtFish;
+    updateInventoryUI();
+    showToast(`Něco udeřilo do trupu! Z podpalubí zmizela ${lost.name}.`, "255,110,100");
+  } else {
+    addDanger(1);
+    showToast("Něco udeřilo do trupu… a pak bylo ticho.", "255,110,100");
+  }
+}
+
+function drawAttackFlash() {
+  if (attackFlash <= 0) return;
+  const v = ctx.createRadialGradient(
+    canvas.width / 2, canvas.height / 2, canvas.height * 0.2,
+    canvas.width / 2, canvas.height / 2, canvas.height * 0.8
+  );
+  v.addColorStop(0, "rgba(120,0,10,0)");
+  v.addColorStop(1, `rgba(150,0,20,${attackFlash * 0.55})`);
+  ctx.fillStyle = v;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
+
+function playThud() {
+  sfxTone(70, { to: 38, dur: 0.6, gain: 0.3 });
+  sfxNoise({ filter: "lowpass", freq: 300, to: 80, dur: 0.7, gain: 0.25 });
+}
+
+function nearLighthouse() {
+  return Math.abs(player.x - LIGHTHOUSE_WX) < LIGHTHOUSE_SAFE_RADIUS;
+}
+
+// --- Toasts: short messages that don't pause the game ---
+
+function showToast(text, rgb = "230,220,200") {
+  const stack = document.getElementById("toast-stack");
+  if (!stack) return;
+  const el = document.createElement("div");
+  el.className = "toast";
+  el.style.setProperty("--toast", rgb);
+  el.textContent = text;
+  stack.appendChild(el);
+  while (stack.children.length > 3) stack.removeChild(stack.firstChild);
+  setTimeout(() => el.classList.add("out"), 3200);
+  setTimeout(() => el.remove(), 3800);
+}
 
 function gameLoop() {
   const surfaceY = getSurfaceY();
@@ -7090,6 +7323,9 @@ function gameLoop() {
     if (isInReefZone(player.x)) {
       regionEl.textContent = "⚠ Krvavý útes";
       regionEl.style.color = "#ff5580";
+    } else if (nearLighthouse()) {
+      regionEl.textContent = "☀ Pod majákem";
+      regionEl.style.color = "#e8d9a0";
     } else {
       regionEl.textContent = "The Marrows";
       regionEl.style.color = "";
@@ -7230,6 +7466,7 @@ function gameLoop() {
   drawFogLayers(surfaceY, "front");
   drawRain();
   drawLightningFlash(surfaceY);
+  drawAttackFlash();
   drawVignette();
 
   // Lighthouse beam (on top of everything for dramatic effect)
@@ -7274,6 +7511,7 @@ syncRelicsHud();
 initFishingRingSvg();
 initMenuButtons();
 initSpotState(); // after the whole script has run: it uses constants declared further down
+ensureContracts();
 updateInventoryUI();
 if (loadGame()) {
   triggerDialogue("Lodní deník", `Pokračuješ v plavbě — den ${dayNum}. Postup se ukládá sám.`);

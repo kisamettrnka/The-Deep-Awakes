@@ -181,3 +181,45 @@
 }
 
 .btn-new-game:hover { opacity: 1; }
+
+/* ---------- harbour contracts ---------- */
+.contracts {
+  margin: 10px 0 14px;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(120, 90, 45, 0.4);
+  border-radius: 3px;
+  text-align: left;
+}
+
+.contracts-title {
+  font-family: "Cinzel", serif;
+  font-size: 0.78rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #d6b876;
+  margin-bottom: 6px;
+}
+
+.contract-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  grid-template-areas: "name progress reward" "meta progress reward";
+  column-gap: 12px;
+  padding: 5px 0;
+  border-top: 1px solid rgba(120, 90, 45, 0.2);
+}
+
+.contract-row:first-child { border-top: none; }
+.contract-name { grid-area: name; color: #f0e2bc; font-weight: 600; }
+.contract-meta { grid-area: meta; font-size: 0.78rem; color: #8f826c; }
+.contract-progress { grid-area: progress; align-self: center; font-family: "Cinzel", serif; color: #c8b896; }
+.contract-reward { grid-area: reward; align-self: center; color: #e8c070; font-weight: 600; }
+.contract-row.ready .contract-progress { color: #8ce0a0; }
+.contract-row.ready .contract-name::after { content: " ✓"; color: #8ce0a0; }
+
+.contracts-hint {
+  margin-top: 6px;
+  font-size: 0.75rem;
+  color: #7f735f;
+}

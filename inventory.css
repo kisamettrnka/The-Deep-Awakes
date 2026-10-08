@@ -213,3 +213,11 @@
 }
 
 .journal-card.unknown .journal-stats { color: #5e554a; }
+
+/* ---------- freshness of the catch ---------- */
+.inventory-slot.freshness-stale { box-shadow: inset 0 0 0 1px rgba(220, 170, 70, 0.55); }
+.inventory-slot.freshness-rotten { box-shadow: inset 0 0 0 1px rgba(120, 150, 60, 0.6); filter: saturate(0.4) brightness(0.75); }
+.fresh-label { font-size: 0.75rem; }
+.fresh-fresh { color: #8ce0a0; }
+.fresh-stale { color: #e0b860; }
+.fresh-rotten { color: #9aa860; }
