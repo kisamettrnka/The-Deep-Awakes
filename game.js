@@ -268,13 +268,13 @@ let wildFishing = false;
 
 // Headlight: the player can switch it off (L) to save the battery
 let headlightOn = true;
-let headlight = { on: true, pct: 1, flicker: 1, dead: false, strength: 1, halfW: 140, r: 110, g: 220, b: 170 };
+let headlight = { on: true, pct: 1, flicker: 1, dead: false, strength: 1, halfW: 58, reachPx: 150, bowLen: 240, r: 110, g: 220, b: 170 };
 let batteryDeadWarned = false;
 let gameWon = false;
 
 // The boat swings round to face where it sails (eased −1…1)
-let boatFacing = 1;
-let boatFacingTarget = 1;
+let boatFacing = -1;
+let boatFacingTarget = -1;
 let fishJournal = {};          // species id → { count, best }
 let seabedFeatures = [];
 let sparkles = [];
@@ -1344,7 +1344,9 @@ function drawHookedFishView() {
 function rollHookedFish() {
   const distanceRatio = Math.min(1.0, Math.abs(player.x) / (worldWidth / 2));
   const rolledDepth = 50 + distanceRatio * 320 + Math.random() * 30;
-  const species = getRandomFishForDepth(rolledDepth, getDaylightFactor(), isInReefZone(player.x), isInOilRigZone(player.x));
+  // Only a lit lamp attracts the better fish, and the light upgrade is what widens the odds
+  const lightLevel = headlight.on && headlight.strength > 0.3 ? upgrades.lights : 1;
+  const species = getRandomFishForDepth(rolledDepth, getDaylightFactor(), isInReefZone(player.x), isInOilRigZone(player.x), lightLevel);
   return makeCaughtFish(species);
 }
 
@@ -2572,6 +2574,7 @@ function drawTownBuildings(surfaceY) {
     const lit = hash(i * 19 + 8) > 0.2 ? Math.max(0, Math.min(1, (dark - switchOn) * 6)) : 0;
     const winGlow = 0.12 + lit * (0.3 + hash(i + 2) * 0.5);
     const flicker = Math.sin(performance.now() * 0.003 + i * 2.7) * 0.08 * lit;
+    if (lit > 0.05) shoreLights.push({ x: sx, a: lit * (0.45 + hash(i * 3) * 0.4), rgb: "255,195,110" });
     ctx.fillStyle = `rgba(255,195,110,${winGlow + flicker})`;
     ctx.fillRect(sx - 3, gy + 6, 6, 7);
     if (bw > 22) {
@@ -3577,13 +3580,16 @@ function addGlow(x, y, r, strength, color) {
 
 function computeHeadlight() {
   const pct = Math.max(0, battery / BATTERY_MAX);
-  const lightsFactor = 1 + (upgrades.lights - 1) * 0.28;
+  const lvl = upgrades.lights;
   let flicker = 1;
   if (pct > 0 && pct < 0.2) {
     const f = Math.sin(performance.now() * 0.025 + Math.random() * 0.5) * 0.5 + 0.5;
     flicker = 0.15 + f * 0.5;
   }
   const on = headlightOn && pct > 0;
+  // A tired battery shortens the beam as well as dimming it
+  const vigor = 0.6 + 0.4 * Math.min(1, pct * 2);
+  const waterH = Math.max(1, canvas.height - getSurfaceY());
   return {
     on,
     pct,
@@ -3591,7 +3597,11 @@ function computeHeadlight() {
     dead: pct <= 0,
     // Full strength until the battery runs low, then it fades out
     strength: on ? Math.min(1, 0.35 + pct * 1.3) * flicker : 0,
-    halfW: (140 + Math.sin(performance.now() * 0.001) * 10) * lightsFactor * (0.55 + 0.45 * Math.min(1, pct * 2)),
+    // A small downward cone; only the light upgrade makes it reach deeper and wider
+    halfW: (58 + (lvl - 1) * 16 + Math.sin(performance.now() * 0.001) * 3) * vigor,
+    reachPx: waterH * (0.28 + (lvl - 1) * 0.17) * vigor,
+    // The bow lamp throws light forward over the water
+    bowLen: (240 + (lvl - 1) * 45) * vigor,
     r: Math.round(110 + (1 - pct) * 140),
     g: Math.round(200 + pct * 20),
     b: Math.round(110 + pct * 60)
@@ -3609,6 +3619,37 @@ function cutLight(g, x, y, r, a) {
   rg.addColorStop(1, "rgba(0,0,0,0)");
   g.fillStyle = rg;
   g.fillRect(x - r, y - r, r * 2, r * 2);
+}
+
+// Geometry of the bow lamp's forward beam (the boat's facing eases through zero when it turns)
+function bowBeam(boatX, surfaceY) {
+  const sgn = boatFacing >= 0 ? 1 : -1;
+  const lamp = Math.abs(boatFacing);
+  const len = headlight.bowLen * lamp;
+  const bx = boatX + 78 * boatFacing;
+  return { sgn, len, bx, far: bx + sgn * len, depthFar: 22 + len * 0.17 };
+}
+
+function cutBowLight(g, boatX, surfaceY) {
+  const bb = bowBeam(boatX, surfaceY);
+  if (bb.len < 10) return;
+  const s = headlight.strength;
+  for (let i = 0; i < 3; i++) {
+    const k = 1 - i * 0.28;                       // widest wedge first, then tighter cores
+    const grad = g.createLinearGradient(bb.bx, 0, bb.far, 0);
+    grad.addColorStop(0, `rgba(0,0,0,${0.55 * s})`);
+    grad.addColorStop(0.6, `rgba(0,0,0,${0.34 * s})`);
+    grad.addColorStop(1, "rgba(0,0,0,0)");
+    g.fillStyle = grad;
+    g.beginPath();
+    g.moveTo(bb.bx, surfaceY - 3);
+    g.lineTo(bb.far, surfaceY - 3);
+    g.lineTo(bb.far, surfaceY + bb.depthFar * k);
+    g.lineTo(bb.bx + bb.sgn * 8, surfaceY + 10 * k);
+    g.closePath();
+    g.fill();
+  }
+  cutLight(g, bb.bx + bb.sgn * bb.len * 0.45, surfaceY + 14, bb.len * 0.38, 0.4 * s);
 }
 
 function drawUnderwaterDarkness(surfaceY, boatX, keelY) {
@@ -3641,31 +3682,30 @@ function drawUnderwaterDarkness(surfaceY, boatX, keelY) {
 
   g.globalCompositeOperation = "destination-out";
   const hl = headlight;
-  const bottom = canvas.height + 10;
   if (hl.on && hl.strength > 0.01) {
-    // Nested cones give the beam a soft edge and a brighter core
+    const reachY = keelY + hl.reachPx;
+    // Nested cones give the beam a soft edge and a brighter core; it fades out at its reach
     const layers = 7;
     for (let i = 0; i < layers; i++) {
       const k = i / (layers - 1);                  // 0 = outer halo, 1 = core
-      const w = hl.halfW * (1.4 - 0.8 * k);
-      const topW = 10 + 14 * (1 - k);
+      const w = hl.halfW * (1.45 - 0.85 * k);
+      const topW = 8 + 10 * (1 - k);
       const a = 0.24 * hl.strength;
-      const grad = g.createLinearGradient(0, keelY, 0, bottom);
+      const grad = g.createLinearGradient(0, keelY, 0, reachY);
       grad.addColorStop(0, `rgba(0,0,0,${a})`);
-      grad.addColorStop(0.5, `rgba(0,0,0,${a * 0.8})`);
-      grad.addColorStop(1, `rgba(0,0,0,${a * 0.4})`);
+      grad.addColorStop(0.55, `rgba(0,0,0,${a * 0.7})`);
+      grad.addColorStop(1, "rgba(0,0,0,0)");
       g.fillStyle = grad;
       g.beginPath();
       g.moveTo(boatX - topW, keelY);
-      g.lineTo(boatX - w, bottom);
-      g.lineTo(boatX + w, bottom);
+      g.lineTo(boatX - w, reachY);
+      g.lineTo(boatX + w, reachY);
       g.lineTo(boatX + topW, keelY);
       g.closePath();
       g.fill();
     }
-    // Spill around the hull, and the pool where the beam meets the seabed
-    cutLight(g, boatX, keelY + 24, 120, 0.45 * hl.strength);
-    cutLight(g, boatX, canvas.height - 45, hl.halfW * 1.1, 0.25 * hl.strength);
+    cutLight(g, boatX, keelY + 18, 70, 0.4 * hl.strength);
+    cutBowLight(g, boatX, surfaceY);
   }
   // The deck lantern spills a little warm light onto the water around the boat
   cutLight(g, boatX + 60 * boatFacing, surfaceY + 6, 85, 0.3);
@@ -3691,7 +3731,7 @@ function drawEmissiveGlows() {
   ctx.restore();
 }
 
-// The headlight beam itself: a haze of light, slow shafts and the lamp bloom
+// The downward beam: a small cone whose reach grows with the light upgrade
 function drawLightCone(screenBoatX, keelY, surfaceY) {
   const hl = headlight;
   const H = canvas.height;
@@ -3717,66 +3757,132 @@ function drawLightCone(screenBoatX, keelY, surfaceY) {
   const s = hl.strength;
   const { r, g, b } = hl;
   const t = performance.now() * 0.001;
+  const reachY = Math.min(H - 25, keelY + hl.reachPx);
   ctx.save();
   ctx.globalCompositeOperation = "screen";
 
-  // Haze inside the beam
-  const cone = ctx.createLinearGradient(0, keelY, 0, H);
+  // Haze inside the beam, fading to nothing at its reach
+  const cone = ctx.createLinearGradient(0, keelY, 0, reachY);
   cone.addColorStop(0, `rgba(${r},${g},${b},${0.17 * s})`);
-  cone.addColorStop(0.35, `rgba(${Math.round(r * 0.6)},${Math.round(g * 0.8)},${b},${0.07 * s})`);
+  cone.addColorStop(0.45, `rgba(${Math.round(r * 0.6)},${Math.round(g * 0.8)},${b},${0.07 * s})`);
   cone.addColorStop(1, "rgba(20,60,40,0)");
   ctx.fillStyle = cone;
   ctx.beginPath();
-  ctx.moveTo(screenBoatX - 14, keelY + 4);
-  ctx.lineTo(screenBoatX - hl.halfW, H - 25);
-  ctx.lineTo(screenBoatX + hl.halfW, H - 25);
-  ctx.lineTo(screenBoatX + 14, keelY + 4);
+  ctx.moveTo(screenBoatX - 12, keelY + 4);
+  ctx.lineTo(screenBoatX - hl.halfW, reachY);
+  ctx.lineTo(screenBoatX + hl.halfW, reachY);
+  ctx.lineTo(screenBoatX + 12, keelY + 4);
   ctx.closePath();
   ctx.fill();
 
   // Shafts of light drifting slowly inside the beam
-  for (let i = 0; i < 6; i++) {
-    const u = (i + 0.5) / 6 - 0.5;
+  for (let i = 0; i < 5; i++) {
+    const u = (i + 0.5) / 5 - 0.5;
     const sway = Math.sin(t * (0.3 + i * 0.07) + i * 1.7) * 0.12;
     const spread = (u + sway) * 2 * hl.halfW * 0.85;
-    const w = 6 + hash(i * 13) * 14;
+    const w = 4 + hash(i * 13) * 9;
     const a = (0.04 + 0.03 * Math.sin(t * 0.7 + i * 2.3)) * s;
-    const sg = ctx.createLinearGradient(0, keelY, 0, H);
+    const sg = ctx.createLinearGradient(0, keelY, 0, reachY);
     sg.addColorStop(0, `rgba(${r},${g},${b},${a})`);
     sg.addColorStop(1, `rgba(${r},${g},${b},0)`);
     ctx.fillStyle = sg;
     ctx.beginPath();
     ctx.moveTo(screenBoatX - 3, keelY + 4);
-    ctx.lineTo(screenBoatX + spread - w, H - 25);
-    ctx.lineTo(screenBoatX + spread + w, H - 25);
+    ctx.lineTo(screenBoatX + spread - w, reachY);
+    ctx.lineTo(screenBoatX + spread + w, reachY);
     ctx.lineTo(screenBoatX + 3, keelY + 4);
     ctx.closePath();
     ctx.fill();
   }
 
-  // Caustic shimmer where the beam lands on the seabed
-  const causticCount = Math.round(8 * Math.min(1, s * 1.2));
-  for (let i = 0; i < causticCount; i++) {
-    const cx = screenBoatX + (i - 3.5) * 35 + Math.sin(t * 1.5 + i * 1.5) * 20;
-    const cy = H - 50 - hash(i * 17) * 30;
-    const cr = 12 + Math.sin(t * 1.8 + i * 2.1) * 6;
-    ctx.fillStyle = `rgba(120,220,160,${(0.05 + Math.sin(t * 1.2 + i * 1.8) * 0.025) * s})`;
-    ctx.beginPath();
-    ctx.ellipse(cx, cy, cr * 1.5, cr * 0.4, Math.sin(t * 1.5 + i) * 0.4, 0, Math.PI * 2);
-    ctx.fill();
+  // Caustic shimmer only when the beam actually reaches the seabed
+  if (keelY + hl.reachPx > H - 70) {
+    const causticCount = Math.round(7 * Math.min(1, s * 1.2));
+    for (let i = 0; i < causticCount; i++) {
+      const cx = screenBoatX + (i - 3) * 22 + Math.sin(t * 1.5 + i * 1.5) * 14;
+      const cy = H - 50 - hash(i * 17) * 30;
+      const cr = 10 + Math.sin(t * 1.8 + i * 2.1) * 5;
+      ctx.fillStyle = `rgba(120,220,160,${(0.05 + Math.sin(t * 1.2 + i * 1.8) * 0.025) * s})`;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, cr * 1.5, cr * 0.4, Math.sin(t * 1.5 + i) * 0.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 
   // Bloom on the lamp under the hull and on the bow fixture
-  const lamp = ctx.createRadialGradient(screenBoatX, keelY + 6, 0, screenBoatX, keelY + 6, 46);
+  const lamp = ctx.createRadialGradient(screenBoatX, keelY + 6, 0, screenBoatX, keelY + 6, 40);
   lamp.addColorStop(0, `rgba(${r + 40},${g + 20},${b + 30},${0.35 * s})`);
   lamp.addColorStop(1, "rgba(0,0,0,0)");
   ctx.fillStyle = lamp;
-  ctx.fillRect(screenBoatX - 46, keelY - 40, 92, 92);
+  ctx.fillRect(screenBoatX - 40, keelY - 34, 80, 80);
   const head = ctx.createRadialGradient(screenBoatX + 78 * boatFacing, keelY - 11, 1, screenBoatX + 78 * boatFacing, keelY - 11, 22);
   head.addColorStop(0, `rgba(${Math.min(255, r + 60)},${Math.min(255, g + 30)},200,${0.55 * s})`);
   head.addColorStop(1, "rgba(255,255,200,0)");
   ctx.fillStyle = head;
   ctx.fillRect(screenBoatX + 78 * boatFacing - 22, keelY - 33, 44, 44);
+  ctx.restore();
+}
+
+// The bow lamp: a beam through the air that lands on the water ahead of the boat
+function drawBowLight(screenBoatX, keelY, surfaceY) {
+  const hl = headlight;
+  if (!hl.on) return;
+  const bb = bowBeam(screenBoatX, surfaceY);
+  if (bb.len < 10) return;
+  const s = hl.strength;
+  const { r, g, b } = hl;
+  const t = performance.now() * 0.001;
+  const lampY = keelY - 11;
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+
+  // Beam through the air, from the lamp down to the sea ahead
+  const air = ctx.createLinearGradient(bb.bx, 0, bb.far, 0);
+  air.addColorStop(0, `rgba(${r + 60},${g + 30},${b + 40},${0.34 * s})`);
+  air.addColorStop(1, `rgba(${r},${g},${b},0)`);
+  ctx.fillStyle = air;
+  ctx.beginPath();
+  ctx.moveTo(bb.bx, lampY - 2);
+  ctx.lineTo(bb.far, surfaceY - 12);
+  ctx.lineTo(bb.far, surfaceY + 4);
+  ctx.lineTo(bb.bx, lampY + 3);
+  ctx.closePath();
+  ctx.fill();
+
+  // The sea surface lit up ahead
+  ctx.save();
+  ctx.translate(bb.bx + bb.sgn * bb.len * 0.55, surfaceY + 3);
+  ctx.scale(1, 0.13);
+  const pool = ctx.createRadialGradient(0, 0, 0, 0, 0, bb.len * 0.5);
+  pool.addColorStop(0, `rgba(${r + 50},${g + 30},${b + 40},${0.7 * s})`);
+  pool.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = pool;
+  ctx.beginPath();
+  ctx.arc(0, 0, bb.len * 0.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  // A shallow wedge of light under the surface
+  const wedge = ctx.createLinearGradient(bb.bx, 0, bb.far, 0);
+  wedge.addColorStop(0, `rgba(${r},${g},${b},${0.26 * s})`);
+  wedge.addColorStop(1, `rgba(${r},${g},${b},0)`);
+  ctx.fillStyle = wedge;
+  ctx.beginPath();
+  ctx.moveTo(bb.bx, surfaceY - 2);
+  ctx.lineTo(bb.far, surfaceY - 2);
+  ctx.lineTo(bb.far, surfaceY + bb.depthFar * 0.8);
+  ctx.lineTo(bb.bx + bb.sgn * 8, surfaceY + 8);
+  ctx.closePath();
+  ctx.fill();
+
+  // Glints dancing on the waves in the beam
+  for (let i = 0; i < 14; i++) {
+    const u = (i + 0.5) / 14;
+    const x = bb.bx + bb.sgn * bb.len * (0.12 + 0.86 * u) + Math.sin(t * 1.4 + i * 2.1) * 6;
+    const flick = 0.5 + 0.5 * Math.sin(t * 3.2 + i * 1.7);
+    ctx.fillStyle = `rgba(235,255,245,${0.5 * flick * (1 - u * 0.8) * s})`;
+    ctx.fillRect(x - 2, surfaceY + 1 + (i % 3) * 2, 4 + (1 - u) * 3, 1.2);
+  }
   ctx.restore();
 }
 
@@ -4403,7 +4509,7 @@ function updateWildlife(dt) {
   const night = getDaylightFactor() < 0.4;
   const beamOn = headlight.on && headlight.strength > 0.05;
   const beamHalf = headlight.halfW;
-  const beamH = Math.max(1, canvas.height - surfaceY - 40);
+  const beamH = Math.max(1, headlight.reachPx);
   const info = { night, beamOn, beamHalf, pxPer };
 
   // Starting a catch: curious fish nearby come to inspect the bait
@@ -4514,7 +4620,11 @@ function updateWildlife(dt) {
     if (beamOn) {
       const dyPx = f.depth * pxPer;
       const halfAt = 14 + (beamHalf - 14) * Math.min(1, dyPx / beamH);
-      if (Math.abs(f.wx - player.x) < halfAt * 0.9) inBeam = 1;
+      if (dyPx < beamH && Math.abs(f.wx - player.x) < halfAt * 0.9) inBeam = 1;
+      // ...or by the bow lamp's wedge of light ahead of the boat
+      const sgn = boatFacing >= 0 ? 1 : -1;
+      const dxF = (f.wx - player.x - 78 * boatFacing) * sgn;
+      if (dxF > 0 && dxF < headlight.bowLen * Math.abs(boatFacing) && dyPx < 20 + dxF * 0.17) inBeam = 1;
     }
     f.lit += (inBeam - f.lit) * Math.min(1, dt * 4);
   });
@@ -7289,6 +7399,509 @@ function showToast(text, rgb = "230,220,200") {
   setTimeout(() => el.remove(), 3800);
 }
 
+// =====================================================================
+// OPEN-SEA REEFS — rock spires crowned with corals along the whole sea.
+// Drawn "as lit": the darkness pass hides them until the headlight reaches
+// them, and some corals glow faintly on their own. A better light upgrade
+// shows more of the taller spires.
+// =====================================================================
+
+const SEA_REEF_CELL = 420;
+const CORAL_COLORS = [
+  { h: 340, glow: "255,90,150" },
+  { h: 18,  glow: "255,140,70" },
+  { h: 300, glow: "225,90,235" },
+  { h: 170, glow: "70,240,200" },
+  { h: 48,  glow: "255,205,80" },
+  { h: 205, glow: "90,170,255" }
+];
+
+function seabedYAt(wx) {
+  const roll =
+    Math.sin(wx * 0.003) * 50 +
+    Math.sin(wx * 0.01) * 25 +
+    Math.sin(wx * 0.025) * 10 +
+    hash(Math.floor(wx / 50)) * 16;
+  return canvas.height - 55 - roll;
+}
+
+function drawBranchCoral(x, y, s, hue, t, seed) {
+  ctx.lineCap = "round";
+  const n = 4 + Math.floor(hash(seed) * 3);
+  for (let i = 0; i < n; i++) {
+    const a = -Math.PI / 2 + (i / (n - 1) - 0.5) * 1.5;
+    const len = s * (0.65 + hash(seed + i * 3) * 0.5);
+    const sway = Math.sin(t * 0.8 + seed + i) * 2.5;
+    const mx = x + Math.cos(a) * len * 0.5 + sway * 0.5;
+    const my = y + Math.sin(a) * len * 0.5;
+    const ex = x + Math.cos(a) * len + sway;
+    const ey = y + Math.sin(a) * len;
+    ctx.strokeStyle = `hsl(${hue},62%,44%)`;
+    ctx.lineWidth = Math.max(2, s * 0.13);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.quadraticCurveTo(mx, my, ex, ey);
+    ctx.stroke();
+    // tip branches and glowing polyps
+    for (let k = -1; k <= 1; k += 2) {
+      const bx = ex + Math.cos(a + k * 0.7) * len * 0.35;
+      const by = ey + Math.sin(a + k * 0.7) * len * 0.35;
+      ctx.lineWidth = Math.max(1.4, s * 0.08);
+      ctx.beginPath();
+      ctx.moveTo(ex, ey);
+      ctx.lineTo(bx, by);
+      ctx.stroke();
+      ctx.fillStyle = `hsl(${hue},85%,72%)`;
+      ctx.beginPath();
+      ctx.arc(bx, by, Math.max(1.5, s * 0.07), 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+
+function drawFanCoral(x, y, s, hue, t, seed) {
+  const sway = Math.sin(t * 0.7 + seed) * 0.08;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(sway);
+  ctx.strokeStyle = `hsl(${hue},50%,34%)`;
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(0, -s * 0.35);
+  ctx.stroke();
+  ctx.fillStyle = `hsla(${hue},65%,50%,0.55)`;
+  ctx.beginPath();
+  ctx.ellipse(0, -s * 0.75, s * 0.62, s * 0.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = `hsla(${hue},80%,70%,0.8)`;
+  ctx.lineWidth = 1;
+  for (let i = -5; i <= 5; i++) {
+    ctx.beginPath();
+    ctx.moveTo(0, -s * 0.3);
+    ctx.lineTo(i * s * 0.12, -s * 1.22 + Math.abs(i) * s * 0.05);
+    ctx.stroke();
+  }
+  ctx.beginPath();
+  for (let i = -3; i <= 3; i++) ctx.moveTo(-s * 0.55, -s * (0.55 + i * 0.09)), ctx.lineTo(s * 0.55, -s * (0.55 + i * 0.09));
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawTubeCoral(x, y, s, hue, t, seed) {
+  const n = 3 + Math.floor(hash(seed) * 3);
+  for (let i = 0; i < n; i++) {
+    const tx = x + (i - (n - 1) / 2) * s * 0.3;
+    const h = s * (0.55 + hash(seed + i * 7) * 0.7);
+    const w = s * 0.16;
+    const grad = ctx.createLinearGradient(tx - w, 0, tx + w, 0);
+    grad.addColorStop(0, `hsl(${hue},55%,30%)`);
+    grad.addColorStop(0.5, `hsl(${hue},68%,52%)`);
+    grad.addColorStop(1, `hsl(${hue},55%,28%)`);
+    ctx.fillStyle = grad;
+    ctx.fillRect(tx - w, y - h, w * 2, h);
+    ctx.fillStyle = "rgba(10,6,16,0.9)";
+    ctx.beginPath();
+    ctx.ellipse(tx, y - h, w, w * 0.45, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // a puff of tiny bubbles now and then
+    const bub = (t * 0.4 + seed + i) % 1;
+    ctx.fillStyle = `hsla(${hue},80%,85%,${0.5 * (1 - bub)})`;
+    ctx.beginPath();
+    ctx.arc(tx + Math.sin(bub * 9 + i) * 2, y - h - bub * 26, 1.3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawBrainCoral(x, y, s, hue, t, seed) {
+  const g = ctx.createRadialGradient(x - s * 0.15, y - s * 0.3, 1, x, y - s * 0.2, s * 0.65);
+  g.addColorStop(0, `hsl(${hue},60%,64%)`);
+  g.addColorStop(1, `hsl(${hue},58%,32%)`);
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.ellipse(x, y - s * 0.15, s * 0.6, s * 0.46, 0, Math.PI, 0);
+  ctx.fill();
+  ctx.strokeStyle = `hsla(${hue},55%,22%,0.7)`;
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 4; i++) {
+    ctx.beginPath();
+    ctx.arc(x + (i - 1.5) * s * 0.2, y - s * 0.15, s * (0.25 + i * 0.05), Math.PI * 1.05, Math.PI * 1.95);
+    ctx.stroke();
+  }
+}
+
+function drawReefAnemone(x, y, s, hue, t, seed) {
+  ctx.lineCap = "round";
+  for (let i = -3; i <= 3; i++) {
+    const sway = Math.sin(t * 1.4 + seed + i) * 3;
+    ctx.strokeStyle = `hsl(${hue},75%,${55 + (i % 2) * 10}%)`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x + i * 2.5, y);
+    ctx.quadraticCurveTo(x + i * 4 + sway, y - s * 0.5, x + i * 6 + sway * 1.6, y - s * (0.8 + hash(seed + i) * 0.3));
+    ctx.stroke();
+  }
+  ctx.fillStyle = `hsl(${hue},50%,30%)`;
+  ctx.beginPath();
+  ctx.ellipse(x, y, 9, 4, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawRockPillar(px, baseY, w, h, seed) {
+  const topY = baseY - h;
+  const j = (k) => (hash(seed + k * 3.7) - 0.5);
+  const pts = [
+    [px - w * 0.62, baseY + 6],
+    [px - w * 0.5 + j(1) * 8, baseY - h * 0.35],
+    [px - w * 0.36 + j(2) * 8, topY + h * 0.2],
+    [px - w * 0.2 + j(3) * 10, topY + j(4) * 14],
+    [px + w * 0.05 + j(5) * 10, topY - 6 + j(6) * 12],
+    [px + w * 0.28 + j(7) * 10, topY + 8 + j(8) * 12],
+    [px + w * 0.4 + j(9) * 8, topY + h * 0.3],
+    [px + w * 0.52 + j(10) * 8, baseY - h * 0.3],
+    [px + w * 0.66, baseY + 6]
+  ];
+  const grad = ctx.createLinearGradient(px - w * 0.6, 0, px + w * 0.6, 0);
+  grad.addColorStop(0, "#3e5a58");
+  grad.addColorStop(0.45, "#2d4443");
+  grad.addColorStop(1, "#16262a");
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+  ctx.closePath();
+  ctx.fill();
+
+  // Lit upper-left edge and a few cracks
+  ctx.strokeStyle = "rgba(150,190,180,0.35)";
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  for (let i = 1; i <= 4; i++) i === 1 ? ctx.moveTo(pts[i][0], pts[i][1]) : ctx.lineTo(pts[i][0], pts[i][1]);
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(5,12,14,0.5)";
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 3; i++) {
+    const cy = topY + h * (0.3 + i * 0.22);
+    ctx.beginPath();
+    ctx.moveTo(px - w * 0.3 + j(i + 20) * 10, cy);
+    ctx.lineTo(px + w * 0.1 + j(i + 30) * 14, cy + 6 + j(i + 40) * 10);
+    ctx.stroke();
+  }
+  return { topY, topX: px, topW: w * 0.5, ledgeY: topY + 6 };
+}
+
+function drawReefFormation(wx0, cell, surfaceY, t) {
+  const waterH = canvas.height - surfaceY;
+  const n = 2 + Math.floor(hash(cell * 3.3) * 3);
+  const crowns = [];
+  for (let i = 0; i < n; i++) {
+    const px = wx0 + (i - (n - 1) / 2) * 74 + (hash(cell * 17 + i) - 0.5) * 30;
+    const w = 40 + hash(cell * 5 + i * 9) * 52;
+    const h = waterH * (0.16 + hash(cell * 11 + i * 4) * 0.36);
+    const sx = px - camera.x;
+    const baseY = seabedYAt(px) + 8;
+    crowns.push({ sx, baseY, w, h, i, rock: drawRockPillar(sx, baseY, w, h, cell * 7 + i) });
+  }
+
+  // Corals on the crowns and ledges, anemones and kelp at the foot
+  crowns.forEach((c, ci) => {
+    const count = 2 + Math.floor(hash(cell * 19 + c.i) * 3);
+    for (let k = 0; k < count; k++) {
+      const seed = cell * 100 + c.i * 10 + k;
+      const col = CORAL_COLORS[Math.floor(hash(seed * 1.7) * CORAL_COLORS.length)];
+      const kind = Math.floor(hash(seed * 2.3) * 4);
+      const onTop = k === 0;
+      const cx = c.sx + (onTop ? 0 : (hash(seed * 3.1) - 0.5) * c.w * 0.7);
+      const cy = onTop ? c.rock.topY + 4 : c.baseY - c.h * (0.25 + hash(seed * 4.1) * 0.5);
+      const s = 18 + hash(seed * 5.3) * 22;
+      if (kind === 0) drawBranchCoral(cx, cy, s, col.h, t, seed);
+      else if (kind === 1) drawFanCoral(cx, cy, s, col.h, t, seed);
+      else if (kind === 2) drawTubeCoral(cx, cy, s, col.h, t, seed);
+      else drawBrainCoral(cx, cy, s, col.h, t, seed);
+      // Roughly a third of them glow faintly, so a reef can be spotted from afar
+      if (hash(seed * 6.7) > 0.62) addGlow(cx, cy - s * 0.5, 34 + s, 0.16, col.glow);
+    }
+    // foot: anemones and swaying kelp
+    for (let k = 0; k < 2; k++) {
+      const seed = cell * 50 + c.i * 5 + k;
+      const col = CORAL_COLORS[Math.floor(hash(seed * 0.9) * CORAL_COLORS.length)];
+      drawReefAnemone(c.sx + (k ? 1 : -1) * c.w * 0.55, c.baseY + 2, 16 + hash(seed) * 8, col.h, t, seed);
+    }
+    ctx.strokeStyle = "rgba(24,70,40,0.9)";
+    ctx.lineWidth = 3;
+    ctx.lineCap = "round";
+    for (let k = 0; k < 3; k++) {
+      const kx = c.sx - c.w * 0.7 + k * 7;
+      ctx.beginPath();
+      ctx.moveTo(kx, c.baseY + 3);
+      ctx.bezierCurveTo(
+        kx + Math.sin(t + k + ci) * 8, c.baseY - 34,
+        kx - Math.sin(t * 0.8 + k) * 9, c.baseY - 68,
+        kx + Math.sin(t * 0.9 + k * 2) * 11, c.baseY - 100 - k * 12
+      );
+      ctx.stroke();
+    }
+  });
+}
+
+function drawSeaReefs(surfaceY) {
+  const t = performance.now() * 0.001;
+  const first = Math.floor((camera.x - 260) / SEA_REEF_CELL);
+  const last = Math.floor((camera.x + canvas.width + 260) / SEA_REEF_CELL);
+  for (let c = first; c <= last; c++) {
+    if (hash(c * 13.7 + 5) < 0.3) continue;
+    const wx0 = c * SEA_REEF_CELL + 120 + hash(c * 7.1 + 1) * 160;
+    // the dedicated coral reef zone, the oil rig, the harbour and the cliff keep their own look
+    if (wx0 > REEF_WX_START - 200 && wx0 < REEF_WX_END + 200) continue;
+    if (Math.abs(wx0 - OILRIG_WX) < 320 || Math.abs(wx0 - 2720) < 300 || Math.abs(wx0 - LIGHTHOUSE_WX) < 380) continue;
+    drawReefFormation(wx0, c, surfaceY, t);
+  }
+}
+
+// =====================================================================
+// LIVELIER BACKGROUND — mountains with a snow line, horizon glow, sun
+// rays, a glittering path of the sun/moon on the water, reflections of
+// shore lights, channel buoys and a drifting flock of birds.
+// =====================================================================
+
+const shoreLights = [];     // { x, a, rgb } collected while drawing, reflected on the water afterwards
+const HARBOUR_BUOYS = [
+  { wx: 1650, red: true }, { wx: 1950, red: false }, { wx: 2250, red: true },
+  { wx: 3150, red: false }, { wx: 3450, red: true }, { wx: 3750, red: false },
+  { wx: -600, red: true }, { wx: -1100, red: false }
+];
+
+function mixRgb(a, b, k) {
+  return `rgb(${Math.round(a[0] + (b[0] - a[0]) * k)},${Math.round(a[1] + (b[1] - a[1]) * k)},${Math.round(a[2] + (b[2] - a[2]) * k)})`;
+}
+
+function getCelestial(surfaceY) {
+  const angle = ((gameTime / 24) * Math.PI * 2) - Math.PI * 0.5;
+  return {
+    x: canvas.width * 0.5 + Math.cos(angle) * canvas.width * 0.42,
+    y: surfaceY * 0.5 - Math.sin(angle) * surfaceY * 0.72
+  };
+}
+
+function drawMountains(surfaceY) {
+  const day = getDaylightFactor();
+  const sun = getSunsetWeight();
+  const tint = getFogTint();
+  const W = canvas.width;
+  const tintArr = [tint.r, tint.g, tint.b];
+
+  // Warm glow along the horizon at dawn and dusk
+  const glow = ctx.createLinearGradient(0, surfaceY - 170, 0, surfaceY);
+  glow.addColorStop(0, "rgba(255,150,90,0)");
+  glow.addColorStop(1, `rgba(255,150,90,${0.3 * sun + 0.05 * day})`);
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, surfaceY - 170, W, 170);
+
+  const ranges = [
+    { par: 0.025, base: 92, amp: 150, off: 1.3, dark: [24, 34, 52], mix: 0.55, snow: true },
+    { par: 0.06, base: 62, amp: 96, off: 4.1, dark: [14, 22, 32], mix: 0.38, snow: false }
+  ];
+  ranges.forEach((rg) => {
+    const pts = [];
+    for (let x = -10; x <= W + 10; x += 8) {
+      const wx = x + camera.x * rg.par;
+      const ridged = Math.pow(1 - Math.abs(Math.sin(wx * 0.0021 + rg.off)), 1.7);
+      const n = ridged * rg.amp * 0.72 + Math.sin(wx * 0.0063 + rg.off * 2) * rg.amp * 0.16 + Math.sin(wx * 0.017) * rg.amp * 0.05;
+      pts.push([x, surfaceY - rg.base - n]);
+    }
+    const path = () => {
+      ctx.beginPath();
+      ctx.moveTo(-10, surfaceY + 2);
+      pts.forEach(([x, y]) => ctx.lineTo(x, y));
+      ctx.lineTo(W + 10, surfaceY + 2);
+      ctx.closePath();
+    };
+    const topY = surfaceY - rg.base - rg.amp * 0.85;
+    const body = ctx.createLinearGradient(0, topY, 0, surfaceY);
+    body.addColorStop(0, mixRgb(rg.dark, tintArr, rg.mix));
+    body.addColorStop(1, mixRgb(rg.dark, tintArr, Math.min(0.92, rg.mix + 0.4)));
+    path();
+    ctx.fillStyle = body;
+    ctx.fill();
+
+    // Snow near the summits when the sun is up, tinted warm at dawn and dusk
+    if (rg.snow && day > 0.25) {
+      ctx.save();
+      path();
+      ctx.clip();
+      const snow = ctx.createLinearGradient(0, topY, 0, topY + 62);
+      const a = Math.min(0.55, (day - 0.25) * 0.9);
+      snow.addColorStop(0, `rgba(${sun > 0.2 ? "255,215,190" : "235,242,250"},${a})`);
+      snow.addColorStop(1, "rgba(235,242,250,0)");
+      ctx.fillStyle = snow;
+      ctx.fillRect(0, topY, W, 70);
+      ctx.restore();
+    }
+  });
+}
+
+function drawSunRays(surfaceY) {
+  const sun = getSunsetWeight();
+  const day = getDaylightFactor();
+  if (sun < 0.12 || day < 0.12) return;
+  const b = getCelestial(surfaceY);
+  if (b.y > surfaceY - 8) return;
+  const t = performance.now() * 0.001;
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  for (let i = 0; i < 9; i++) {
+    const a = Math.PI * (0.18 + i * 0.08) + Math.sin(t * 0.15 + i) * 0.03;
+    const len = 520 + hash(i * 9) * 220;
+    const spread = 0.035 + hash(i * 5) * 0.03;
+    const rayA = (0.05 + 0.025 * Math.sin(t * 0.4 + i * 1.6)) * sun;
+    const g = ctx.createLinearGradient(b.x, b.y, b.x + Math.cos(a) * len, b.y + Math.sin(a) * len);
+    g.addColorStop(0, `rgba(255,190,120,${rayA})`);
+    g.addColorStop(1, "rgba(255,190,120,0)");
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(b.x, b.y);
+    ctx.lineTo(b.x + Math.cos(a - spread) * len, b.y + Math.sin(a - spread) * len);
+    ctx.lineTo(b.x + Math.cos(a + spread) * len, b.y + Math.sin(a + spread) * len);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawBirdFlock(surfaceY) {
+  const day = getDaylightFactor();
+  if (day < 0.3) return;
+  const t = performance.now() * 0.001;
+  const W = canvas.width;
+  const fx = ((t * 16 + 500) % (W + 700)) - 350;
+  const fy = surfaceY * 0.3 + Math.sin(t * 0.2) * 18;
+  ctx.save();
+  ctx.strokeStyle = `rgba(20,24,30,${0.7 * Math.min(1, (day - 0.3) * 3)})`;
+  ctx.lineWidth = 1.3;
+  ctx.lineCap = "round";
+  for (let i = 0; i < 9; i++) {
+    const row = Math.ceil(i / 2);
+    const side = i % 2 ? 1 : -1;
+    const x = fx - row * 16;
+    const y = fy + side * row * 8 + Math.sin(t * 1.1 + i) * 2;
+    const flap = Math.sin(t * 6 + i * 0.8) * 4;
+    ctx.beginPath();
+    ctx.moveTo(x - 6, y - flap);
+    ctx.quadraticCurveTo(x - 2, y - 3 - flap * 0.3, x, y);
+    ctx.quadraticCurveTo(x + 2, y - 3 - flap * 0.3, x + 6, y - flap);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// Floating channel buoys; their lamps blink at night
+function drawBuoys(surfaceY) {
+  const t = performance.now() * 0.001;
+  const day = getDaylightFactor();
+  HARBOUR_BUOYS.forEach((bu, i) => {
+    const sx = bu.wx - camera.x;
+    if (sx < -30 || sx > canvas.width + 30) return;
+    const bob = Math.sin(t * 1.5 + i * 1.7) * 2;
+    const tilt = Math.sin(t * 1.1 + i) * 0.1;
+    const y = surfaceY + 5 + bob;
+    const col = bu.red ? ["#b2342a", "#e8584a", "255,70,60"] : ["#2a8a4a", "#58d088", "70,255,130"];
+    ctx.save();
+    ctx.translate(sx, y);
+    ctx.rotate(tilt);
+    ctx.fillStyle = col[0];
+    ctx.beginPath();
+    ctx.moveTo(-6, 0);
+    ctx.lineTo(-3, -16);
+    ctx.lineTo(3, -16);
+    ctx.lineTo(6, 0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "rgba(240,240,235,0.85)";
+    ctx.fillRect(-4.5, -9, 9, 2.5);
+    ctx.fillStyle = "#1c1c1e";
+    ctx.fillRect(-1, -22, 2, 6);
+    const blinkOn = (t + i * 0.7) % 3.2 < 0.45;
+    const lampA = blinkOn ? (1 - day * 0.5) : 0.12;
+    ctx.fillStyle = `rgba(${col[2]},${lampA})`;
+    ctx.beginPath();
+    ctx.arc(0, -24, 3, 0, Math.PI * 2);
+    ctx.fill();
+    if (blinkOn) {
+      const gl = ctx.createRadialGradient(0, -24, 0, 0, -24, 22);
+      gl.addColorStop(0, `rgba(${col[2]},${0.5 * (1 - day * 0.6)})`);
+      gl.addColorStop(1, `rgba(${col[2]},0)`);
+      ctx.fillStyle = gl;
+      ctx.fillRect(-22, -46, 44, 44);
+    }
+    ctx.restore();
+    // water ring around the buoy
+    ctx.strokeStyle = "rgba(200,225,235,0.25)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.ellipse(sx, surfaceY + 4, 10 + Math.sin(t * 2 + i) * 1.5, 2, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    if (blinkOn && day < 0.85) shoreLights.push({ x: sx, a: 0.9 * (1 - day), rgb: col[2] });
+  });
+}
+
+// Reflections of lights on the water: windows, buoys, lighthouse, oil rig and the boat's own lamps
+function drawShoreReflections(surfaceY, screenBoatX) {
+  const day = getDaylightFactor();
+  const night = 1 - day;
+  const t = performance.now() * 0.001;
+
+  if (night > 0.2) {
+    const lx = getLighthouseScreenX();
+    shoreLights.push({ x: lx, a: 0.7 * night, rgb: "255,235,170" });
+    shoreLights.push({ x: OILRIG_WX - camera.x, a: (Math.sin(t * 2) > 0 ? 0.9 : 0.25) * night, rgb: "255,70,60" });
+  }
+  shoreLights.push({ x: screenBoatX + 60 * boatFacing, a: 0.65 * (0.4 + night * 0.6), rgb: "255,200,110" });
+  if (headlight.on) shoreLights.push({ x: screenBoatX + 78 * boatFacing, a: 0.55 * headlight.strength, rgb: "215,255,235" });
+
+  ctx.save();
+  shoreLights.forEach((l) => {
+    if (l.a < 0.04 || l.x < -20 || l.x > canvas.width + 20) return;
+    for (let j = 0; j < 9; j++) {
+      const y = surfaceY + 3 + j * 5.5;
+      const ww = 1.4 + j * 0.45;
+      const wobble = Math.sin(t * 2.2 + j * 0.9 + l.x * 0.05) * (1 + j * 0.55);
+      const shimmer = 0.6 + 0.4 * Math.sin(t * 3 + j * 1.3 + l.x);
+      ctx.fillStyle = `rgba(${l.rgb},${l.a * (1 - j / 9) * 0.5 * shimmer})`;
+      ctx.fillRect(l.x + wobble - ww, y, ww * 2, 2.2);
+    }
+  });
+  ctx.restore();
+  shoreLights.length = 0;
+}
+
+// The sun's or moon's glittering path across the water
+function drawGlitterPath(surfaceY) {
+  const day = getDaylightFactor();
+  const b = getCelestial(surfaceY);
+  if (b.y > surfaceY - 6) return;
+  const isSun = day > 0.12;
+  const strength = isSun ? Math.min(1, day * 1.6) * 0.55 : Math.min(1, (1 - day) * 1.4) * 0.4;
+  if (strength < 0.03) return;
+  const t = performance.now() * 0.001;
+  const rgb = isSun ? (getSunsetWeight() > 0.3 ? "255,190,120" : "255,236,170") : "205,220,255";
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  for (let r = 0; r < 14; r++) {
+    const u = r / 13;
+    const y = surfaceY + 2 + Math.pow(u, 1.7) * 52;
+    const spread = 12 + r * 9;
+    const count = 3 + r;
+    for (let k = 0; k < count; k++) {
+      const x = b.x + (hash(r * 31 + k * 7) - 0.5) * 2 * spread;
+      const flick = 0.5 + 0.5 * Math.sin(t * 2.4 + r * 3.1 + k * 5.3);
+      if (flick < 0.35) continue;
+      ctx.fillStyle = `rgba(${rgb},${strength * flick * (1 - Math.abs(x - b.x) / (spread * 1.3))})`;
+      ctx.fillRect(x, y, 3 + r * 0.9, 1 + u * 1.2);
+    }
+  }
+  ctx.restore();
+}
+
 function gameLoop() {
   const surfaceY = getSurfaceY();
 
@@ -7297,6 +7910,7 @@ function gameLoop() {
   lastFrameTime = nowMs;
 
   frameGlows.length = 0;
+  shoreLights.length = 0;
   headlight = computeHeadlight();
   updateBoatRods(frameDt);
   updateWildlife(frameDt);
@@ -7378,7 +7992,10 @@ function gameLoop() {
   drawSky(surfaceY);
   drawLightningBolt();
 
+  drawSunRays(surfaceY);
+  drawMountains(surfaceY);
   drawGulls(surfaceY);
+  drawBirdFlock(surfaceY);
 
   // === BACKGROUND COAST (far) ===
   drawRockyCoast(surfaceY, 0.12, 15, false);
@@ -7413,6 +8030,7 @@ function gameLoop() {
   drawOilRigUnderwater(surfaceY);
   drawSeabed(surfaceY);
   drawCoralReef(surfaceY);
+  drawSeaReefs(surfaceY);
 
   // Seaweed along the whole seabed (only the visible stretch is drawn)
   const weedStart = Math.floor((camera.x - 160) / 140) * 140;
@@ -7433,10 +8051,14 @@ function gameLoop() {
 
   // Light, and things that glow on their own, sit on top of the darkness
   drawLightCone(screenBoatX, keelY, surfaceY);
+  drawBowLight(screenBoatX, keelY, surfaceY);
   drawEmissiveGlows();
   drawBioWake(surfaceY);
   drawDeepEyes(surfaceY);
   drawWaterSurface(surfaceY);
+  drawGlitterPath(surfaceY);
+  drawBuoys(surfaceY);
+  drawShoreReflections(surfaceY, screenBoatX);
   drawRainRipples(surfaceY);
   drawDetektorHints(surfaceY);
 

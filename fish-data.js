@@ -438,7 +438,7 @@ function formatKg(w) {
   return `${w.toFixed(1).replace(".", ",")} kg`;
 }
 
-function getRandomFishForDepth(depth, daylightFactor, inReef, inOilRig) {
+function getRandomFishForDepth(depth, daylightFactor, inReef, inOilRig, lightLevel = 1) {
   // daylightFactor: 0 = night, 1 = noon
   // inReef: boolean — whether the player is fishing in the reef zone
   // inOilRig: boolean — whether the player is fishing in the oil rig zone
@@ -478,9 +478,12 @@ function getRandomFishForDepth(depth, daylightFactor, inReef, inOilRig) {
   let aberrantMult = isNight ? 1.8 : 1.0;
   if ((inReef || inOilRig) && isNight) aberrantMult = 2.8; // zone + night = very dangerous
 
+  // A stronger headlight (light upgrade) draws better fish: uncommon and rare ones turn up more often
+  const lightBoost = { common: 1, uncommon: 1 + 0.18 * (lightLevel - 1), rare: 1 + 0.4 * (lightLevel - 1), aberrant: 1 + 0.12 * (lightLevel - 1) };
+
   const weighedList = [];
   candidates.forEach(f => {
-    let w = weights[f.rarity] || 10;
+    let w = (weights[f.rarity] || 10) * (lightBoost[f.rarity] || 1);
     if (f.rarity === "aberrant") w = Math.round(w * aberrantMult);
     for (let i = 0; i < w; i++) weighedList.push(f);
   });
