@@ -3554,6 +3554,67 @@ function drawSeabed(surfaceY) {
   gb.addColorStop(1, "#0a0e06");
   ctx.fillStyle = gb;
   ctx.fill();
+  fillRockTexture(1, 0.3);
+
+  // Sand ripples following the slope, and a pale crest where the light catches the bed
+  ctx.lineWidth = 1;
+  for (let r = 0; r < 4; r++) {
+    ctx.strokeStyle = `rgba(150,140,100,${0.16 - r * 0.03})`;
+    ctx.beginPath();
+    for (let x = 0; x <= canvas.width + 20; x += 20) {
+      const y = seabedYAt(camera.x + x) + 10 + r * 11 + Math.sin((camera.x + x) * 0.05 + r * 2) * 1.6;
+      if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+  ctx.strokeStyle = "rgba(190,180,130,0.28)";
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  for (let x = 0; x <= canvas.width + 20; x += 20) {
+    const y = seabedYAt(camera.x + x);
+    if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // Pebbles, shells and bones scattered over the sand
+  const p0 = Math.floor((camera.x - 20) / 46);
+  const p1 = Math.floor((camera.x + canvas.width + 20) / 46);
+  for (let c = p0; c <= p1; c++) {
+    if (hash(c * 3.7) < 0.35) continue;
+    const px = c * 46 + hash(c * 5.1) * 40 - camera.x;
+    const py = seabedYAt(c * 46 + hash(c * 5.1) * 40) + 6 + hash(c * 8.3) * 28;
+    const kind = hash(c * 11.9);
+    if (kind < 0.55) {
+      ctx.fillStyle = `rgba(${70 + hash(c) * 40},${68 + hash(c) * 30},${54},0.8)`;
+      ctx.beginPath();
+      ctx.ellipse(px, py, 3 + hash(c * 2) * 5, 2 + hash(c * 4) * 2.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "rgba(190,185,150,0.25)";
+      ctx.fillRect(px - 2, py - 2, 3, 1);
+    } else if (kind < 0.85) {
+      ctx.fillStyle = "rgba(205,190,160,0.7)";
+      ctx.beginPath();
+      ctx.arc(px, py, 3.5, Math.PI, 0);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(90,76,56,0.6)";
+      ctx.lineWidth = 0.8;
+      for (let k = -1; k <= 1; k++) {
+        ctx.beginPath();
+        ctx.moveTo(px, py);
+        ctx.lineTo(px + k * 2.4, py - 3.4);
+        ctx.stroke();
+      }
+    } else {
+      ctx.strokeStyle = "rgba(200,195,170,0.55)";
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(px - 6, py);
+      ctx.lineTo(px + 6, py - 2);
+      ctx.moveTo(px - 2, py - 3);
+      ctx.lineTo(px + 2, py + 2);
+      ctx.stroke();
+    }
+  }
 
   // Rock formations on seabed
   ctx.strokeStyle = "rgba(25,35,20,0.5)";
@@ -3573,9 +3634,19 @@ function drawSeabed(surfaceY) {
     ctx.strokeStyle = "rgba(30,42,28,0.7)";
     ctx.stroke();
 
-    // Fill rock
-    ctx.fillStyle = "rgba(18,26,14,0.4)";
+    // Fill rock, shaded from its lit left side to a dark right side
+    const rockG = ctx.createLinearGradient(ssx, 0, ssx + s.w, 0);
+    rockG.addColorStop(0, "rgba(58,70,56,0.75)");
+    rockG.addColorStop(1, "rgba(10,16,10,0.85)");
+    ctx.fillStyle = rockG;
     ctx.fill();
+    fillRockTexture(1, 0.25);
+    ctx.strokeStyle = "rgba(150,170,130,0.22)";
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(ssx, base);
+    ctx.quadraticCurveTo(ssx + s.w * 0.3, by - 8, ssx + s.w * 0.5, by + 5);
+    ctx.stroke();
   }
 }
 
@@ -4349,23 +4420,45 @@ function playPing() { sfxTone(1180, { dur: 0.3, gain: 0.045 }); }
 
 function drawSeaweed(wx, baseY) {
   const sx = wx - camera.x;
-  if (sx < -20 || sx > canvas.width + 20) return;
+  if (sx < -40 || sx > canvas.width + 40) return;
+  const t = performance.now() * 0.0016;
+  const tall = hash(wx * 0.37) > 0.55;           // some stands grow into kelp
+  const fronds = tall ? 4 : 3;
   ctx.lineCap = "round";
-  for (let s = 0; s < 3; s++) {
-    const segs = 6;
-    let px = sx + s * 7;
+  for (let f = 0; f < fronds; f++) {
+    const segs = tall ? 11 : 6;
+    let px = sx + (f - fronds / 2) * 7;
     let py = baseY;
-    ctx.beginPath();
-    ctx.moveTo(px, py);
+    const lean = (hash(wx + f * 5) - 0.5) * 14;
+    const pts = [[px, py]];
     for (let g = 1; g <= segs; g++) {
-      const t = g / segs;
-      px += Math.sin(t * 3 + s + performance.now() * 0.0018) * 9;
-      py -= 16 + hash(wx + s * 10 + g) * 6;
-      ctx.lineTo(px, py);
+      const u = g / segs;
+      px += Math.sin(u * 3 + f + t + wx * 0.01) * (5 + u * 6) * 0.6 + lean / segs;
+      py -= (tall ? 17 : 14) + hash(wx + f * 10 + g) * 6;
+      pts.push([px, py]);
     }
-    ctx.strokeStyle = `rgba(18,40,25,${0.85 + s * 0.05})`;
-    ctx.lineWidth = 3 - s * 0.5;
+    // Stem, darker at the root and greener toward the tip
+    const stemG = ctx.createLinearGradient(0, baseY, 0, py);
+    stemG.addColorStop(0, "rgba(10,28,18,0.95)");
+    stemG.addColorStop(1, "rgba(34,76,44,0.9)");
+    ctx.strokeStyle = stemG;
+    ctx.lineWidth = tall ? 3.2 : 2.4;
+    ctx.beginPath();
+    pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
     ctx.stroke();
+    // Leaf blades hanging off the stem
+    if (tall) {
+      ctx.fillStyle = "rgba(30,70,40,0.75)";
+      for (let g = 2; g < pts.length; g += 2) {
+        const [x, y] = pts[g];
+        const side = g % 4 === 0 ? 1 : -1;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.quadraticCurveTo(x + side * 10, y - 4 + Math.sin(t * 1.3 + g) * 2, x + side * 15, y + 6);
+        ctx.quadraticCurveTo(x + side * 6, y + 1, x, y);
+        ctx.fill();
+      }
+    }
   }
 }
 
