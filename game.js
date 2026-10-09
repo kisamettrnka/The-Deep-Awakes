@@ -1378,8 +1378,9 @@ function tryStartFishing() {
   if (fishingMode || fishingLocked || detektorMode || detektorLocked) return;
   const spot = getBubbleNearPlayer();
   if (!spot) return;
-  if (inventory.length >= getCargoCapacity()) {
-    triggerDialogue("Podpalubí", "Podpalubí je plné. Prodej úlovek na trhu v přístavu, nebo si na ropné věži vylepši trup.");
+  const rolled = rollHookedFish();
+  if (!findCargoSpot(rolled)) {
+    triggerDialogue("Podpalubí", "Na další úlovek není v podpalubí místo. Přeskládej ryby (I), prodej úlovek v přístavu, nebo si na ropné věži vylepši trup.");
     return;
   }
   activeFishingSpot = spot;
@@ -1389,7 +1390,7 @@ function tryStartFishing() {
   catchProgress = 0;
   redStreak = 0;
 
-  hookedFish = rollHookedFish();
+  hookedFish = rolled;
   fishingParams = getFishingParams(hookedFish);
   fishingNeedleAngle = Math.random() * Math.PI * 2;
   fishingNeedleDir = 1;
@@ -1459,8 +1460,8 @@ function endFishingSuccess() {
   const caught = hookedFish;
   playCatch();
 
-  // Add to inventory
-  inventory.push(caught);
+  // Into the hold (the spot was checked when the cast began)
+  if (!placeInHold(caught)) showToast("Úlovek se nevešel do podpalubí a plouje pryč.", "230,190,110");
   recordCatchInJournal(caught);
   caught.caughtAt = absoluteHours();
   if (activeFishingSpot) activeFishingSpot.stock = Math.max(0, activeFishingSpot.stock - 1);
@@ -1978,8 +1979,9 @@ function update() {
   const f60 = frameDt * 60;
   const goLeft = keys["a"] || keys["arrowleft"];
   const goRight = keys["d"] || keys["arrowright"];
-  if (goLeft) player.x -= player.speed * f60;
-  if (goRight) player.x += player.speed * f60;
+  const speed = player.speed * (1 - HULL_SLOWDOWN * hullDamage);
+  if (goLeft) player.x -= speed * f60;
+  if (goRight) player.x += speed * f60;
   if (goLeft && !goRight) boatFacingTarget = -1;
   else if (goRight && !goLeft) boatFacingTarget = 1;
 
@@ -4195,6 +4197,17 @@ function drawLightningFlash(surfaceY) {
 
 // --- HUD: battery / headlight ---
 
+function updateHullHud() {
+  const slots = document.querySelectorAll("#hull-slots i");
+  slots.forEach((el, i) => el.classList.toggle("hit", i < hullDamage));
+  const btn = document.getElementById("btn-repair-hull");
+  if (btn && !btn._busy) {
+    const cost = hullDamage * HULL_REPAIR_COST;
+    btn.textContent = hullDamage ? `Opravit trup ($${cost})` : "Trup je v pořádku";
+    btn.disabled = !hullDamage;
+  }
+}
+
 function updateBatteryHud() {
   const fill = document.getElementById("battery-bar-fill");
   if (!fill) return;
@@ -5603,6 +5616,25 @@ function initMenuButtons() {
       btnRepairShip._resetTimer = setTimeout(() => { btnRepairShip.textContent = repairLabel; }, 1400);
     });
   }
+  const btnRepairHull = document.getElementById("btn-repair-hull");
+  if (btnRepairHull) {
+    btnRepairHull.addEventListener("click", () => {
+      const cost = hullDamage * HULL_REPAIR_COST;
+      if (!hullDamage) return;
+      btnRepairHull._busy = true;
+      if (gold >= cost) {
+        gold -= cost;
+        hullDamage = 0;
+        if (goldUI) goldUI.innerText = gold;
+        playCoins();
+        saveGame();
+        btnRepairHull.textContent = "Trup opraven";
+      } else {
+        btnRepairHull.textContent = "Nedostatek peněz";
+      }
+      setTimeout(() => { btnRepairHull._busy = false; }, 1400);
+    });
+  }
   if (btnLeaveDock) {
     btnLeaveDock.addEventListener("click", () => closeAllDockMenus());
   }
@@ -5862,49 +5894,139 @@ function buyRodUpgrade(type) {
   }
 }
 
+const CARGO_COLS = 7;
+const CARGO_CELL = 42;
+
+function getCargoRows() {
+  return 2 + upgrades.hull;
+}
+
+function itemDims(f, rot = f.rot) {
+  return rot ? [f.fh, f.fw] : [f.fw, f.fh];
+}
+
+function cargoFits(f, gx, gy, rot, ignore) {
+  const [w, h] = itemDims(f, rot);
+  if (gx < 0 || gy < 0 || gx + w > CARGO_COLS || gy + h > getCargoRows()) return false;
+  return !inventory.some((o) => {
+    if (o === ignore || o.gx === undefined) return false;
+    const [ow, oh] = itemDims(o);
+    return gx < o.gx + ow && o.gx < gx + w && gy < o.gy + oh && o.gy < gy + h;
+  });
+}
+
+// First free spot for a fish, trying it as it is and turned on its side
+function findCargoSpot(f) {
+  for (const rot of f.fw === f.fh ? [0] : [0, 1]) {
+    for (let gy = 0; gy < getCargoRows(); gy++) {
+      for (let gx = 0; gx < CARGO_COLS; gx++) {
+        if (cargoFits(f, gx, gy, rot, null)) return { gx, gy, rot };
+      }
+    }
+  }
+  return null;
+}
+
+function placeInHold(f) {
+  const spot = findCargoSpot(f);
+  if (!spot) return false;
+  Object.assign(f, spot);
+  inventory.push(f);
+  return true;
+}
+
+function drawHoldFish(cv, f) {
+  const [w0, h0] = [f.fw * CARGO_CELL, f.fh * CARGO_CELL];
+  const [cw, ch] = f.rot ? [h0, w0] : [w0, h0];
+  cv.width = cw * 2;
+  cv.height = ch * 2;
+  const g = cv.getContext("2d");
+  g.scale(2, 2);
+  g.translate(cw / 2, ch / 2);
+  if (f.rot) g.rotate(Math.PI / 2);
+  const s = Math.min(w0 / 112, h0 / 62) * 0.95;
+  g.scale(s, s);
+  (FISH_SHAPES[f.shape] || FISH_SHAPES.slim)(g, fishHexToRgb(f.color || "#8aa6b5"), 0.8, 0);
+}
+
+// Drag a fish to another spot in the hold; a plain click turns it on its side
+function startCargoDrag(e, f, el) {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  const rect = inventoryGridEl.getBoundingClientRect();
+  const offX = e.clientX - rect.left - f.gx * CARGO_CELL;
+  const offY = e.clientY - rect.top - f.gy * CARGO_CELL;
+  let moved = false;
+  let tx = f.gx, ty = f.gy;
+  el.setPointerCapture(e.pointerId);
+  el.classList.add("dragging");
+
+  const onMove = (m) => {
+    if (Math.hypot(m.clientX - e.clientX, m.clientY - e.clientY) > 4) moved = true;
+    if (!moved) return;
+    const left = m.clientX - rect.left - offX;
+    const top = m.clientY - rect.top - offY;
+    el.style.left = left + "px";
+    el.style.top = top + "px";
+    tx = Math.round(left / CARGO_CELL);
+    ty = Math.round(top / CARGO_CELL);
+    el.classList.toggle("bad", !cargoFits(f, tx, ty, f.rot, f));
+  };
+  const onUp = () => {
+    el.removeEventListener("pointermove", onMove);
+    el.removeEventListener("pointerup", onUp);
+    el.removeEventListener("pointercancel", onUp);
+    if (!moved) {
+      const turned = f.rot ? 0 : 1;
+      if (f.fw !== f.fh && cargoFits(f, f.gx, f.gy, turned, f)) f.rot = turned;
+    } else if (cargoFits(f, tx, ty, f.rot, f)) {
+      f.gx = tx;
+      f.gy = ty;
+    }
+    updateInventoryUI();
+  };
+  el.addEventListener("pointermove", onMove);
+  el.addEventListener("pointerup", onUp);
+  el.addEventListener("pointercancel", onUp);
+}
+
 function updateInventoryUI() {
   if (!inventoryGridEl) return;
   inventoryGridEl.innerHTML = "";
+  inventoryGridEl.style.width = CARGO_COLS * CARGO_CELL + "px";
+  inventoryGridEl.style.height = getCargoRows() * CARGO_CELL + "px";
 
   if (inventoryCapacityEl) {
-    inventoryCapacityEl.textContent = `Kapacita: ${inventory.length} / ${getCargoCapacity()}`;
+    const used = inventory.reduce((n, f) => n + f.fw * f.fh, 0);
+    inventoryCapacityEl.textContent = `${used} / ${getCargoCapacity()} polí`;
   }
 
-  for (let i = 0; i < getCargoCapacity(); i++) {
-    const slotEl = document.createElement("div");
-    slotEl.className = "inventory-slot";
+  inventory.forEach((fish) => {
+    const [w, h] = itemDims(fish);
+    const el = document.createElement("div");
+    el.className = `inv-item rarity-${fish.rarity} freshness-${fishFreshness(fish).key}`;
+    el.style.left = fish.gx * CARGO_CELL + "px";
+    el.style.top = fish.gy * CARGO_CELL + "px";
+    el.style.width = w * CARGO_CELL + "px";
+    el.style.height = h * CARGO_CELL + "px";
 
-    if (i < inventory.length) {
-      const fish = inventory[i];
-      slotEl.classList.add(`rarity-${fish.rarity}`);
-      const fresh = fishFreshness(fish);
-      slotEl.classList.add(`freshness-${fresh.key}`);
+    const cv = document.createElement("canvas");
+    drawHoldFish(cv, fish);
+    el.appendChild(cv);
 
-      const iconEl = document.createElement("span");
-      iconEl.className = "fish-icon";
-      iconEl.textContent = fish.icon || "🐟";
-      slotEl.appendChild(iconEl);
+    const fresh = fishFreshness(fish);
+    const tooltipEl = document.createElement("div");
+    tooltipEl.className = "inventory-tooltip";
+    tooltipEl.innerHTML = `
+      <strong>${fish.name}</strong><br>
+      <span style="color:#a89878; font-size:0.75rem;">${RARITY_LABEL[fish.rarity]}${fish.weight ? " · " + formatKg(fish.weight) : ""}</span><br>
+      <span class="fresh-label fresh-${fresh.key}">${fresh.label}</span> · <span style="color:#d8cbb0;">$${fishValue(fish)}</span>
+    `;
+    el.appendChild(tooltipEl);
 
-      const tooltipEl = document.createElement("div");
-      tooltipEl.className = "inventory-tooltip";
-
-      let rarityText = "Běžná";
-      if (fish.rarity === "uncommon") rarityText = "Neobvyklá";
-      else if (fish.rarity === "rare") rarityText = "Vzácná";
-      else if (fish.rarity === "aberrant") rarityText = "Abnormální";
-
-      tooltipEl.innerHTML = `
-        <strong>${fish.name}</strong><br>
-        <span style="color:#a89878; font-size:0.75rem;">${rarityText}${fish.weight ? " · " + formatKg(fish.weight) : ""}</span><br>
-        <span class="fresh-label fresh-${fresh.key}">${fresh.label}</span> · <span style="color:#d8cbb0;">$${fishValue(fish)}</span>
-      `;
-      slotEl.appendChild(tooltipEl);
-    } else {
-      slotEl.innerHTML = `<span style="opacity: 0.15; font-size: 1.6rem;">🐟</span>`;
-    }
-
-    inventoryGridEl.appendChild(slotEl);
-  }
+    el.addEventListener("pointerdown", (e) => startCargoDrag(e, fish, el));
+    inventoryGridEl.appendChild(el);
+  });
 }
 
 function toggleInventory() {
@@ -6048,6 +6170,7 @@ function restartGame() {
   rainRipples.length = 0;
 
   gameOver = false;
+  hullDamage = 0;
   danger = 0;
   gold = Math.max(0, gold - 100);
   inventory = [];
@@ -6986,9 +7109,9 @@ let activeFishingSpot = null;
 let journalOpen = false;
 let saveTimer = 0;
 
-// Hull upgrades also enlarge the hold: 12 / 16 / 20 / 24 slots
+// The hold is a grid of 7 × (2 + hull level) cells; hull upgrades add rows
 function getCargoCapacity() {
-  return 8 + upgrades.hull * 4;
+  return CARGO_COLS * getCargoRows();
 }
 
 function initSpotState() {
@@ -7203,7 +7326,8 @@ function saveGame() {
   const data = {
     v: 1,
     gold,
-    inventory: inventory.map((f) => ({ id: f.id, weight: f.weight, caughtAt: f.caughtAt })),
+    inventory: inventory.map((f) => ({ id: f.id, weight: f.weight, caughtAt: f.caughtAt, gx: f.gx, gy: f.gy, rot: f.rot })),
+    hullDamage,
     contracts,
     upgrades: { ...upgrades },
     rodUpgrades: { ...rodUpgrades },
@@ -7239,18 +7363,25 @@ function loadGame() {
   if (!data || data.v !== 1) return false;
 
   gold = Math.max(0, data.gold | 0);
-  inventory = (data.inventory || [])
-    .map((it) => {
-      const sp = FISH_SPECIES.find((f) => f.id === it.id);
-      if (!sp) return null;
-      const f = makeCaughtFish(sp, it.weight);
-      f.caughtAt = it.caughtAt;
-      return f;
-    })
-    .filter(Boolean);
-  caughtFish = inventory.length;
   Object.assign(upgrades, data.upgrades || {});
   Object.assign(rodUpgrades, data.rodUpgrades || {});
+  // The hold needs the hull level first; fish without a saved spot (older saves) are packed in
+  inventory = [];
+  (data.inventory || []).forEach((it) => {
+    const sp = FISH_SPECIES.find((f) => f.id === it.id);
+    if (!sp) return;
+    const f = makeCaughtFish(sp, it.weight);
+    f.caughtAt = it.caughtAt;
+    const rot = it.rot ? 1 : 0;
+    if (Number.isInteger(it.gx) && Number.isInteger(it.gy) && cargoFits(f, it.gx, it.gy, rot, null)) {
+      Object.assign(f, { gx: it.gx, gy: it.gy, rot });
+      inventory.push(f);
+    } else {
+      placeInHold(f);
+    }
+  });
+  caughtFish = inventory.length;
+  hullDamage = Math.max(0, Math.min(HULL_SLOTS, data.hullDamage | 0));
   player.speed = 2.8 + (upgrades.engine - 1) * 0.9;
   battery = Math.max(0, Math.min(BATTERY_MAX, Number(data.battery) || BATTERY_MAX));
   headlightOn = data.headlightOn !== false;
@@ -7318,6 +7449,10 @@ const CONTRACT_SLOTS = 3;
 const LIGHTHOUSE_SAFE_RADIUS = 600;
 
 let contracts = [];          // { speciesId, count, done, reward }
+const HULL_SLOTS = 3;
+const HULL_SLOWDOWN = 0.12;          // speed lost per damaged slot
+const HULL_REPAIR_COST = 40;         // per damaged slot, at the harbour
+let hullDamage = 0;                  // 0..HULL_SLOTS — hits from the deep that were not shrugged off
 let attackTimer = 30;        // seconds until the deep may strike again
 let attackFlash = 0;         // red flash after a hit, 1 → 0
 let freshnessTimer = 0;
@@ -7459,6 +7594,8 @@ function updateAttacks(dt) {
     showToast("Něco udeřilo do trupu — ale trup vydržel.", "230,190,110");
     return;
   }
+  hullDamage = Math.min(HULL_SLOTS, hullDamage + 1);
+  if (hullDamage === HULL_SLOTS) showToast("Trup je v troskách — loď zpomalila. Oprav ho v přístavu.", "255,150,90");
   if (inventory.length) {
     const idx = Math.floor(Math.random() * inventory.length);
     const lost = inventory.splice(idx, 1)[0];
@@ -8279,6 +8416,7 @@ const reflCanvas = document.createElement("canvas");
 function drawSceneReflection(surfaceY) {
   const H = 64;
   const W = canvas.width;
+  if (!W) return;   // window with no size (minimised / hidden)
   if (reflCanvas.width !== W || reflCanvas.height !== H) {
     reflCanvas.width = W;
     reflCanvas.height = H;
@@ -8392,6 +8530,7 @@ function gameLoop() {
   }
 
   updateBatteryHud();
+  updateHullHud();
 
   ctx.save();
 

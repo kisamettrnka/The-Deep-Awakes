@@ -400,12 +400,22 @@ function computeFishPrice(species, weight) {
   return Math.max(1, Math.round(weight * FISH_PRICE_PER_KG * (species.priceMult || 1)));
 }
 
+// How much room a fish takes up in the hold grid: heavier fish are bigger, eels stay long and thin
+function fishFootprint(species, weight) {
+  const cells = weight < 2 ? 2 : weight < 4 ? 3 : weight < 8 ? 4 : weight < 14 ? 6 : 8;
+  if (species.shape === "eel") return [Math.min(cells, 5), 1];
+  return { 2: [2, 1], 3: [3, 1], 4: [2, 2], 6: [3, 2], 8: [4, 2] }[cells];
+}
+
 // One caught fish = the species data plus its own weight and price (weight given when loading a save)
 function makeCaughtFish(species, savedWeight) {
   const weight = savedWeight != null ? savedWeight : rollFishWeight(species);
   const [lo, hi] = species.weight || [1, 2];
+  const [fw, fh] = fishFootprint(species, weight);
   return {
     ...species,
+    fw,
+    fh,
     weight,
     weightRatio: hi > lo ? (weight - lo) / (hi - lo) : 0.5,
     price: computeFishPrice(species, weight)

@@ -319,6 +319,39 @@ canvas {
   min-width: 1.8em;
 }
 
+#hull-wrap {
+  margin-top: 5px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+#hull-label {
+  font-family: "Cinzel", serif;
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #9a7f68;
+  min-width: 5.6em;
+}
+
+#hull-slots { display: flex; gap: 4px; }
+
+#hull-slots i {
+  width: 22px;
+  height: 9px;
+  border: 1px solid rgba(140, 100, 70, 0.6);
+  background: linear-gradient(180deg, #7a5a40, #4a3424);
+  border-radius: 2px;
+  transition: background 0.3s, border-color 0.3s;
+}
+
+#hull-slots i.hit {
+  background: rgba(20, 10, 8, 0.6);
+  border-color: rgba(200, 70, 50, 0.7);
+  box-shadow: inset 0 0 4px rgba(200, 60, 40, 0.5);
+}
+
 /* ---------- toasts: short messages that don't pause the game ---------- */
 #toast-stack {
   position: fixed;
