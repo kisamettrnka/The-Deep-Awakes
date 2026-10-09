@@ -78,6 +78,7 @@
 }
 
 /* Rarity classes for items */
+.inv-item.gear { border-color: #8a6e3a; background: transparent; }
 .inv-item.rarity-common { border-color: #555; }
 .inv-item.rarity-uncommon { border-color: #3b7a57; box-shadow: inset 0 0 4px rgba(59,122,87,0.3); }
 .inv-item.rarity-rare { border-color: #3b5e7a; box-shadow: inset 0 0 5px rgba(59,94,122,0.4); }

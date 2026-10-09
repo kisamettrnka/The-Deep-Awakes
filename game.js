@@ -125,7 +125,7 @@ function generateFishingGreenZones() {
 }
 
 function getBubbleActivateRadius() {
-  return 130 + (rodUpgrades.bait - 1) * 30; // Lvl 1: 130, Lvl 2: 160, Lvl 3: 190
+  return 130 + (rodUpgrades.bait - 1) * 30 + (hasGear("sonar") ? 50 : 0); // Lvl 1: 130, Lvl 2: 160, Lvl 3: 190
 }
 
 function getMaxRedStreak() {
@@ -2088,7 +2088,7 @@ function update() {
     battery = Math.min(BATTERY_MAX, battery + charge * frameDt);
   }
   if (headlightOn) {
-    const drain = BATTERY_DRAIN_PER_SEC * (getDaylightFactor() < 0.3 ? 1.5 : 1.0);
+    const drain = BATTERY_DRAIN_PER_SEC * (getDaylightFactor() < 0.3 ? 1.5 : 1.0) * (hasGear("battery") ? 0.7 : 1);
     battery = Math.max(0, battery - drain * frameDt);
   }
 
@@ -5747,7 +5747,56 @@ function sellAllFish() {
   }
 }
 
+function buildGearShop() {
+  const box = document.getElementById("gear-shop");
+  if (!box) return;
+  GEAR_DEFS.forEach((def) => {
+    const row = document.createElement("div");
+    row.className = "market-row";
+    row.style.marginBottom = "12px";
+    row.innerHTML = `
+      <div style="text-align: left;">
+        <strong>${def.icon} ${def.name}</strong> <span style="color:#888;">(${def.fw}×${def.fh})</span>
+        <div style="font-size:0.8rem; color:#888;">${def.desc}</div>
+      </div>`;
+    const btn = document.createElement("button");
+    btn.id = `btn-buy-gear-${def.id}`;
+    btn.className = "market-btn";
+    btn.style.width = "110px";
+    btn.addEventListener("click", () => buyGear(def.id));
+    row.appendChild(btn);
+    box.appendChild(row);
+  });
+}
+
+function buyGear(id) {
+  const def = gearDef(id);
+  const say = (text, cls) => {
+    if (!oilrigResultEl) return;
+    oilrigResultEl.textContent = text;
+    oilrigResultEl.className = `market-result ${cls}`;
+    oilrigResultEl.classList.remove("hidden");
+  };
+  if (ownsGear(id)) return;
+  if (gold < def.cost) return say("Nedostatek peněz!", "bad");
+  if (!placeGear(id)) return say("V podpalubí není pro tohle vybavení místo.", "bad");
+  gold -= def.cost;
+  if (goldUI) goldUI.innerText = gold;
+  playCoins();
+  updateInventoryUI();
+  updateOilRigUI();
+  say(`${def.name} je naloženo — najdeš ho v podpalubí (I).`, "ok");
+}
+
 function updateOilRigUI() {
+  GEAR_DEFS.forEach((def) => {
+    const btn = document.getElementById(`btn-buy-gear-${def.id}`);
+    if (!btn) return;
+    const owned = ownsGear(def.id);
+    btn.textContent = owned ? "MÁŠ" : `$${def.cost}`;
+    btn.disabled = owned;
+  });
+
   const types = ["engine", "lights", "hull"];
   types.forEach(type => {
     const lvl = upgrades[type];
@@ -5897,6 +5946,32 @@ function buyRodUpgrade(type) {
 const CARGO_COLS = 7;
 const CARGO_CELL = 42;
 
+// Equipment lives in the same grid as the catch: it only works while it is loaded, and it takes room fish could use
+const GEAR_DEFS = [
+  { id: "cooler",  name: "Chladicí box",    icon: "🧊", fw: 2, fh: 2, cost: 140, desc: "Úlovek se kazí poloviční rychlostí." },
+  { id: "battery", name: "Záložní článek",  icon: "🔋", fw: 1, fh: 2, cost: 110, desc: "Světlo spotřebovává o 30 % méně baterie." },
+  { id: "sonar",   name: "Rybí sonar",      icon: "📡", fw: 3, fh: 1, cost: 180, desc: "Větší dosah rybolovu a dřívější objevování hejn." },
+  { id: "brace",   name: "Výztuha trupu",   icon: "🛡️", fw: 2, fh: 2, cost: 220, desc: "Zásahy z hlubin se častěji odrazí od trupu." }
+];
+const gear = [];          // loaded equipment: { gear: id, fw, fh, gx, gy, rot }
+let gearStash = [];       // ids of equipment left in the harbour store
+
+function gearDef(id) {
+  return GEAR_DEFS.find((d) => d.id === id);
+}
+
+function hasGear(id) {
+  return gear.some((x) => x.gear === id);
+}
+
+function ownsGear(id) {
+  return hasGear(id) || gearStash.includes(id);
+}
+
+function holdItems() {
+  return inventory.concat(gear);
+}
+
 function getCargoRows() {
   return 2 + upgrades.hull;
 }
@@ -5908,7 +5983,7 @@ function itemDims(f, rot = f.rot) {
 function cargoFits(f, gx, gy, rot, ignore) {
   const [w, h] = itemDims(f, rot);
   if (gx < 0 || gy < 0 || gx + w > CARGO_COLS || gy + h > getCargoRows()) return false;
-  return !inventory.some((o) => {
+  return !holdItems().some((o) => {
     if (o === ignore || o.gx === undefined) return false;
     const [ow, oh] = itemDims(o);
     return gx < o.gx + ow && o.gx < gx + w && gy < o.gy + oh && o.gy < gy + h;
@@ -5933,6 +6008,38 @@ function placeInHold(f) {
   Object.assign(f, spot);
   inventory.push(f);
   return true;
+}
+
+function placeGear(id) {
+  const def = gearDef(id);
+  const item = { gear: id, fw: def.fw, fh: def.fh, rot: 0 };
+  const spot = findCargoSpot(item);
+  if (!spot) return false;
+  Object.assign(item, spot);
+  gear.push(item);
+  return true;
+}
+
+function drawHoldGear(cv, it) {
+  const def = gearDef(it.gear);
+  const [cw, ch] = itemDims(it);
+  cv.width = cw * CARGO_CELL * 2;
+  cv.height = ch * CARGO_CELL * 2;
+  const g = cv.getContext("2d");
+  g.scale(2, 2);
+  const W = cw * CARGO_CELL, H = ch * CARGO_CELL;
+  const bg = g.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, "rgba(120,96,50,0.55)");
+  bg.addColorStop(1, "rgba(50,40,24,0.7)");
+  g.fillStyle = bg;
+  g.fillRect(0, 0, W, H);
+  g.strokeStyle = "rgba(220,190,110,0.35)";
+  g.lineWidth = 1;
+  g.strokeRect(3.5, 3.5, W - 7, H - 7);
+  g.font = `${Math.round(Math.min(W, H) * 0.6)}px "Segoe UI Emoji", "Apple Color Emoji", sans-serif`;
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  g.fillText(def.icon, W / 2, H / 2 + 2);
 }
 
 function drawHoldFish(cv, f) {
@@ -5972,13 +6079,21 @@ function startCargoDrag(e, f, el) {
     ty = Math.round(top / CARGO_CELL);
     el.classList.toggle("bad", !cargoFits(f, tx, ty, f.rot, f));
   };
-  const onUp = () => {
+  const insidePanel = (u) => {
+    const r = document.querySelector(".inventory-panel").getBoundingClientRect();
+    return u.clientX >= r.left && u.clientX <= r.right && u.clientY >= r.top && u.clientY <= r.bottom;
+  };
+  const onUp = (u) => {
     el.removeEventListener("pointermove", onMove);
     el.removeEventListener("pointerup", onUp);
     el.removeEventListener("pointercancel", onUp);
     if (!moved) {
       const turned = f.rot ? 0 : 1;
       if (f.fw !== f.fh && cargoFits(f, f.gx, f.gy, turned, f)) f.rot = turned;
+    } else if (f.gear && dockActive && !insidePanel(u)) {
+      gear.splice(gear.indexOf(f), 1);
+      gearStash.push(f.gear);
+      showToast(`${gearDef(f.gear).name} odložen ve skladu v přístavu.`, "200,190,150");
     } else if (cargoFits(f, tx, ty, f.rot, f)) {
       f.gx = tx;
       f.gy = ty;
@@ -5997,35 +6112,64 @@ function updateInventoryUI() {
   inventoryGridEl.style.height = getCargoRows() * CARGO_CELL + "px";
 
   if (inventoryCapacityEl) {
-    const used = inventory.reduce((n, f) => n + f.fw * f.fh, 0);
+    const used = holdItems().reduce((n, f) => n + f.fw * f.fh, 0);
     inventoryCapacityEl.textContent = `${used} / ${getCargoCapacity()} polí`;
   }
 
-  inventory.forEach((fish) => {
-    const [w, h] = itemDims(fish);
+  holdItems().forEach((item) => {
+    const [w, h] = itemDims(item);
     const el = document.createElement("div");
-    el.className = `inv-item rarity-${fish.rarity} freshness-${fishFreshness(fish).key}`;
-    el.style.left = fish.gx * CARGO_CELL + "px";
-    el.style.top = fish.gy * CARGO_CELL + "px";
-    el.style.width = w * CARGO_CELL + "px";
-    el.style.height = h * CARGO_CELL + "px";
-
-    const cv = document.createElement("canvas");
-    drawHoldFish(cv, fish);
-    el.appendChild(cv);
-
-    const fresh = fishFreshness(fish);
     const tooltipEl = document.createElement("div");
     tooltipEl.className = "inventory-tooltip";
-    tooltipEl.innerHTML = `
-      <strong>${fish.name}</strong><br>
-      <span style="color:#a89878; font-size:0.75rem;">${RARITY_LABEL[fish.rarity]}${fish.weight ? " · " + formatKg(fish.weight) : ""}</span><br>
-      <span class="fresh-label fresh-${fresh.key}">${fresh.label}</span> · <span style="color:#d8cbb0;">$${fishValue(fish)}</span>
-    `;
-    el.appendChild(tooltipEl);
+    const cv = document.createElement("canvas");
 
-    el.addEventListener("pointerdown", (e) => startCargoDrag(e, fish, el));
+    if (item.gear) {
+      const def = gearDef(item.gear);
+      el.className = "inv-item gear";
+      drawHoldGear(cv, item);
+      tooltipEl.innerHTML = `<strong>${def.name}</strong><br><span style="color:#a89878; font-size:0.75rem;">${def.desc}</span>`;
+    } else {
+      const fresh = fishFreshness(item);
+      el.className = `inv-item rarity-${item.rarity} freshness-${fresh.key}`;
+      drawHoldFish(cv, item);
+      tooltipEl.innerHTML = `
+        <strong>${item.name}</strong><br>
+        <span style="color:#a89878; font-size:0.75rem;">${RARITY_LABEL[item.rarity]}${item.weight ? " · " + formatKg(item.weight) : ""}</span><br>
+        <span class="fresh-label fresh-${fresh.key}">${fresh.label}</span> · <span style="color:#d8cbb0;">$${fishValue(item)}</span>
+      `;
+    }
+    el.style.left = item.gx * CARGO_CELL + "px";
+    el.style.top = item.gy * CARGO_CELL + "px";
+    el.style.width = w * CARGO_CELL + "px";
+    el.style.height = h * CARGO_CELL + "px";
+    el.appendChild(cv);
+    el.appendChild(tooltipEl);
+    el.addEventListener("pointerdown", (e) => startCargoDrag(e, item, el));
     inventoryGridEl.appendChild(el);
+  });
+  renderGearStash();
+}
+
+// Equipment left in the harbour store: shown in the dock menu, loaded back with one click
+function renderGearStash() {
+  const box = document.getElementById("gear-stash");
+  if (!box) return;
+  box.innerHTML = "";
+  box.classList.toggle("hidden", gearStash.length === 0);
+  gearStash.forEach((id) => {
+    const def = gearDef(id);
+    const btn = document.createElement("button");
+    btn.className = "market-btn btn-secondary";
+    btn.textContent = `Naložit: ${def.icon} ${def.name}`;
+    btn.addEventListener("click", () => {
+      if (!placeGear(id)) {
+        btn.textContent = "Není místo v podpalubí";
+        return;
+      }
+      gearStash.splice(gearStash.indexOf(id), 1);
+      updateInventoryUI();
+    });
+    box.appendChild(btn);
   });
 }
 
@@ -6171,6 +6315,8 @@ function restartGame() {
 
   gameOver = false;
   hullDamage = 0;
+  gear.length = 0;
+  gearStash = [];
   danger = 0;
   gold = Math.max(0, gold - 100);
   inventory = [];
@@ -7132,7 +7278,7 @@ function updateSpots(dt) {
         b.stock++;
       }
     }
-    if (!b.discovered && Math.abs(b.wx - player.x) < DISCOVER_RADIUS) b.discovered = true;
+    if (!b.discovered && Math.abs(b.wx - player.x) < DISCOVER_RADIUS * (hasGear("sonar") ? 1.8 : 1)) b.discovered = true;
   });
   detektorSpots.forEach((s) => {
     if (!s.discovered && Math.abs(s.wx - player.x) < DISCOVER_RADIUS * 0.6) s.discovered = true;
@@ -7328,6 +7474,8 @@ function saveGame() {
     gold,
     inventory: inventory.map((f) => ({ id: f.id, weight: f.weight, caughtAt: f.caughtAt, gx: f.gx, gy: f.gy, rot: f.rot })),
     hullDamage,
+    gear: gear.map((x) => ({ id: x.gear, gx: x.gx, gy: x.gy, rot: x.rot })),
+    gearStash,
     contracts,
     upgrades: { ...upgrades },
     rodUpgrades: { ...rodUpgrades },
@@ -7382,6 +7530,19 @@ function loadGame() {
   });
   caughtFish = inventory.length;
   hullDamage = Math.max(0, Math.min(HULL_SLOTS, data.hullDamage | 0));
+  gear.length = 0;
+  gearStash = (data.gearStash || []).filter((id) => gearDef(id));
+  (data.gear || []).forEach((it) => {
+    const def = gearDef(it.id);
+    if (!def || ownsGear(it.id)) return;
+    const item = { gear: it.id, fw: def.fw, fh: def.fh, rot: it.rot ? 1 : 0 };
+    if (Number.isInteger(it.gx) && Number.isInteger(it.gy) && cargoFits(item, it.gx, it.gy, item.rot, null)) {
+      Object.assign(item, { gx: it.gx, gy: it.gy });
+      gear.push(item);
+    } else if (!placeGear(it.id)) {
+      gearStash.push(it.id);
+    }
+  });
   player.speed = 2.8 + (upgrades.engine - 1) * 0.9;
   battery = Math.max(0, Math.min(BATTERY_MAX, Number(data.battery) || BATTERY_MAX));
   headlightOn = data.headlightOn !== false;
@@ -7466,7 +7627,7 @@ function fishAgeHours(f) {
 }
 
 function fishFreshness(f) {
-  const age = fishAgeHours(f);
+  const age = fishAgeHours(f) * (hasGear("cooler") ? 0.5 : 1);
   if (age < FRESH_HOURS) return { key: "fresh", label: "Čerstvá", mult: 1 };
   if (age < STALE_HOURS) return { key: "stale", label: "Odležená", mult: STALE_MULT };
   return { key: "rotten", label: "Zkažená", mult: ROTTEN_MULT };
@@ -7590,7 +7751,7 @@ function updateAttacks(dt) {
   playThud();
 
   // A stronger hull shrugs some hits off
-  if (Math.random() < (upgrades.hull - 1) * 0.18) {
+  if (Math.random() < (upgrades.hull - 1) * 0.18 + (hasGear("brace") ? 0.25 : 0)) {
     showToast("Něco udeřilo do trupu — ale trup vydržel.", "230,190,110");
     return;
   }
@@ -8696,6 +8857,7 @@ function gameLoop() {
 syncRelicsHud();
 initFishingRingSvg();
 initMenuButtons();
+buildGearShop();
 initSpotState(); // after the whole script has run: it uses constants declared further down
 ensureContracts();
 updateInventoryUI();
