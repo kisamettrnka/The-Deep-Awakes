@@ -1,6 +1,6 @@
 // =====================================================================
 // THE DEEP AWAKES — Fish Database
-// 12 + 6 reef species (Common, Uncommon, Rare, Aberrant)
+// 12 open-sea + 6 reef + 4 oil rig species (Common, Uncommon, Rare, Aberrant)
 // =====================================================================
 
 // Fishing minigame tuning per species:
@@ -44,8 +44,7 @@ const FISH_SPECIES = [
     desc: "Obyčejná stříbrná rybka. Plave v mělčinách a drží se v hejnech.",
     depthMin: 30,
     depthMax: 150,
-    timeOfDay: "any",
-    hueShift: 0.1
+    timeOfDay: "any"
   },
   {
     id: "mackerel",
@@ -60,8 +59,7 @@ const FISH_SPECIES = [
     desc: "Rychlý plavec s pruhovaným hřbetem. Chutná, ale nijak zvláštní.",
     depthMin: 40,
     depthMax: 180,
-    timeOfDay: "day",
-    hueShift: 0.2
+    timeOfDay: "day"
   },
   {
     id: "cod",
@@ -76,8 +74,7 @@ const FISH_SPECIES = [
     desc: "Spolehlivý úlovek chladných moří. Živí se při dně.",
     depthMin: 100,
     depthMax: 260,
-    timeOfDay: "any",
-    hueShift: 0.3
+    timeOfDay: "any"
   },
   {
     id: "flatfish",
@@ -92,8 +89,7 @@ const FISH_SPECIES = [
     desc: "Plochá ryba ležící na písku. Obě oči má na jedné straně hlavy.",
     depthMin: 120,
     depthMax: 300,
-    timeOfDay: "any",
-    hueShift: 0.05
+    timeOfDay: "any"
   },
   {
     id: "eel",
@@ -108,8 +104,7 @@ const FISH_SPECIES = [
     desc: "Slizký, hadovitý tvor. Nerad se nechává chytit.",
     depthMin: 80,
     depthMax: 220,
-    timeOfDay: "night",
-    hueShift: 0.15
+    timeOfDay: "night"
   },
   {
     id: "salmon",
@@ -124,8 +119,7 @@ const FISH_SPECIES = [
     desc: "Svalnatá ryba bojující proti proudu. Má narůžovělé maso.",
     depthMin: 50,
     depthMax: 200,
-    timeOfDay: "day",
-    hueShift: 0.0
+    timeOfDay: "day"
   },
   {
     id: "skate",
@@ -140,8 +134,7 @@ const FISH_SPECIES = [
     desc: "Plochý paryba s bičovitým ocasem. Plachtí vodou jako stín.",
     depthMin: 150,
     depthMax: 340,
-    timeOfDay: "any",
-    hueShift: 0.25
+    timeOfDay: "any"
   },
   {
     id: "angler",
@@ -157,8 +150,7 @@ const FISH_SPECIES = [
     desc: "Dravá hlubinná ryba s bioluminiscenční lucerničkou na hlavě.",
     depthMin: 220,
     depthMax: 380,
-    timeOfDay: "night",
-    hueShift: 0.4
+    timeOfDay: "night"
   },
   {
     id: "gulper",
@@ -174,8 +166,7 @@ const FISH_SPECIES = [
     desc: "Skoro celé její tělo tvoří obrovská rozevíratelná tlama plná jehliček.",
     depthMin: 260,
     depthMax: 400,
-    timeOfDay: "night",
-    hueShift: 0.5
+    timeOfDay: "night"
   },
   {
     id: "aberrant_eye",
@@ -191,8 +182,7 @@ const FISH_SPECIES = [
     desc: "Narušená mutace ryby. Její jediné lidsky vyhlížející oko tě upřeně sleduje.",
     depthMin: 80,
     depthMax: 280,
-    timeOfDay: "night",
-    hueShift: 0.7
+    timeOfDay: "night"
   },
   {
     id: "aberrant_tentacle",
@@ -208,8 +198,7 @@ const FISH_SPECIES = [
     desc: "Namísto běžných ploutví jí ze stran vyrůstají malá chvějící se chapadélka.",
     depthMin: 120,
     depthMax: 320,
-    timeOfDay: "night",
-    hueShift: 0.8
+    timeOfDay: "night"
   },
   {
     id: "aberrant_maw",
@@ -225,8 +214,7 @@ const FISH_SPECIES = [
     desc: "Její tělo je pokryté nepravidelnými zuby, které při vytažení z vody tiše cvakají.",
     depthMin: 200,
     depthMax: 400,
-    timeOfDay: "night",
-    hueShift: 0.95
+    timeOfDay: "night"
   },
 
   // ─── KORÁLOVÝ ÚTES — unikátní druhy ──────────────────────────────
@@ -244,7 +232,6 @@ const FISH_SPECIES = [
     depthMin: 20,
     depthMax: 160,
     timeOfDay: "day",
-    hueShift: 0.02,
     reefOnly: true
   },
   {
@@ -261,7 +248,6 @@ const FISH_SPECIES = [
     depthMin: 30,
     depthMax: 200,
     timeOfDay: "day",
-    hueShift: 0.35,
     reefOnly: true
   },
   {
@@ -278,7 +264,6 @@ const FISH_SPECIES = [
     depthMin: 60,
     depthMax: 250,
     timeOfDay: "any",
-    hueShift: 0.92,
     reefOnly: true
   },
   {
@@ -296,7 +281,6 @@ const FISH_SPECIES = [
     depthMin: 80,
     depthMax: 320,
     timeOfDay: "any",
-    hueShift: 0.6,
     reefOnly: true
   },
   {
@@ -314,7 +298,6 @@ const FISH_SPECIES = [
     depthMin: 100,
     depthMax: 380,
     timeOfDay: "night",
-    hueShift: 0.55,
     reefOnly: true
   },
   {
@@ -332,7 +315,6 @@ const FISH_SPECIES = [
     depthMin: 40,
     depthMax: 400,
     timeOfDay: "night",
-    hueShift: 0.88,
     reefOnly: true
   },
 
@@ -351,7 +333,6 @@ const FISH_SPECIES = [
     depthMin: 30,
     depthMax: 200,
     timeOfDay: "any",
-    hueShift: 0.08,
     oilOnly: true
   },
   {
@@ -368,7 +349,6 @@ const FISH_SPECIES = [
     depthMin: 60,
     depthMax: 280,
     timeOfDay: "night",
-    hueShift: 0.28,
     oilOnly: true
   },
   {
@@ -386,7 +366,6 @@ const FISH_SPECIES = [
     depthMin: 100,
     depthMax: 370,
     timeOfDay: "any",
-    hueShift: 0.62,
     oilOnly: true
   },
   {
@@ -404,7 +383,6 @@ const FISH_SPECIES = [
     depthMin: 50,
     depthMax: 400,
     timeOfDay: "night",
-    hueShift: 0.98,
     oilOnly: true
   }
 ];

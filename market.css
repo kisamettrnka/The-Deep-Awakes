@@ -1,4 +1,4 @@
-#market-ui, #shipyard-ui, #dock-menu-ui, #price-list-ui {
+#market-ui, #oilrig-ui, #lighthouse-shop-ui, #dock-menu-ui {
   position: fixed;
   left: 50%;
   top: 50%;
@@ -8,7 +8,7 @@
   pointer-events: none;
 }
 
-#market-ui:not(.hidden), #shipyard-ui:not(.hidden), #dock-menu-ui:not(.hidden), #price-list-ui:not(.hidden) {
+#market-ui:not(.hidden), #oilrig-ui:not(.hidden), #lighthouse-shop-ui:not(.hidden), #dock-menu-ui:not(.hidden) {
   pointer-events: auto;
 }
 
