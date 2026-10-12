@@ -1458,6 +1458,12 @@ function closeFishingPanel() {
 function endFishingSuccess() {
   fishingLocked = true;
   const caught = hookedFish;
+  // No miss at all: the fish comes aboard in perfect condition and sells for more
+  if (redStreak === 0) {
+    caught.perfect = true;
+    caught.price = Math.round(caught.price * 1.25);
+    showToast("Dokonalý úlovek! Cena +25 %", "255,225,140");
+  }
   playCatch();
 
   // Into the hold (the spot was checked when the cast began)
@@ -1916,6 +1922,11 @@ window.addEventListener("keydown", (e) => {
     return;
   }
 
+  if (key === "h" && !e.repeat) {
+    if (!inMinigame) playHorn();
+    return;
+  }
+
   if (key === "e") {
     if (inMinigame) return;
     if (dockActive) {
@@ -1972,14 +1983,27 @@ let dangerThresh3 = false;
 let reefWarnedEntry = false;
 
 function update() {
-  if (fishingMode || detektorMode || rechargeMinigameActive || dockActive || dialogueActive || gameOver) return;
+  if (fishingMode || detektorMode || rechargeMinigameActive || dockActive || dialogueActive || gameOver) {
+    boostActive = false;
+    return;
+  }
 
   // player.speed is tuned in pixels per 60 Hz frame; scale by real time so
   // high-refresh monitors don't sail faster
   const f60 = frameDt * 60;
   const goLeft = keys["a"] || keys["arrowleft"];
   const goRight = keys["d"] || keys["arrowright"];
-  const speed = player.speed * (1 - HULL_SLOWDOWN * hullDamage);
+  // Turbo (Shift): a burst of speed that drains its own meter and recovers while you ease off
+  const moving = goLeft || goRight;
+  boostActive = !!keys["shift"] && moving && !boostLocked && boost > 0;
+  if (boostActive) {
+    boost = Math.max(0, boost - BOOST_DRAIN * frameDt);
+    if (boost <= 0) boostLocked = true;
+  } else {
+    boost = Math.min(BOOST_MAX, boost + BOOST_REGEN * frameDt * (moving ? 0.6 : 1));
+    if (boostLocked && boost >= 30) boostLocked = false;
+  }
+  const speed = player.speed * (1 - HULL_SLOWDOWN * hullDamage) * (boostActive ? BOOST_SPEED : 1);
   if (goLeft) player.x -= speed * f60;
   if (goRight) player.x += speed * f60;
   if (goLeft && !goRight) boatFacingTarget = -1;
@@ -2043,6 +2067,7 @@ function update() {
 
   updateAttacks(frameDt);
   updateFreshness(frameDt);
+  updateCrates(frameDt);
 
   // Exhaust smoke drifts back from the funnel on the cabin
   const bob = boatBob();
@@ -2051,7 +2076,7 @@ function update() {
   const exhaustWy = getSurfaceY() - 8 + bob - 68;
   const isMoving = goLeft || goRight;
 
-  if (isMoving && Math.random() < 0.18 * f60) {
+  if (isMoving && Math.random() < (boostActive ? 0.55 : 0.18) * f60) {
     smokeParticles.push({
       wx: exhaustWx,
       wy: exhaustWy,
@@ -4197,6 +4222,15 @@ function drawLightningFlash(surfaceY) {
 
 // --- HUD: battery / headlight ---
 
+function updateBoostHud() {
+  const fill = document.getElementById("boost-fill");
+  if (!fill) return;
+  fill.style.width = (boost / BOOST_MAX) * 100 + "%";
+  fill.classList.toggle("low", boostLocked);
+  const wrap = document.getElementById("boost-wrap");
+  if (wrap) wrap.classList.toggle("active", boostActive);
+}
+
 function updateHullHud() {
   const slots = document.querySelectorAll("#hull-slots i");
   slots.forEach((el, i) => el.classList.toggle("hit", i < hullDamage));
@@ -4334,9 +4368,9 @@ function updateSound() {
   const sailing = !dockActive && !fishingMode && !detektorMode && !dialogueActive && !gameOver &&
     !!(keys["a"] || keys["arrowleft"] || keys["d"] || keys["arrowright"]);
   setSmooth(sound.rain.gain, gameOver ? 0 : night ? 0.045 : 0.016, 0.8);
-  setSmooth(sound.engine.gain, gameOver ? 0 : sailing ? 0.07 : 0.018, 0.25);
-  setSmooth(sound.engineOsc.frequency, 40 + upgrades.engine * 5 + (sailing ? 12 : 0), 0.4);
-  setSmooth(sound.chug.frequency, sailing ? 9 + upgrades.engine : 5, 0.4);
+  setSmooth(sound.engine.gain, gameOver ? 0 : sailing ? (boostActive ? 0.11 : 0.07) : 0.018, 0.25);
+  setSmooth(sound.engineOsc.frequency, 40 + upgrades.engine * 5 + (sailing ? 12 : 0) + (boostActive ? 14 : 0), 0.4);
+  setSmooth(sound.chug.frequency, sailing ? 9 + upgrades.engine + (boostActive ? 6 : 0) : 5, 0.4);
 }
 
 function syncSoundHint() {
@@ -4425,6 +4459,11 @@ function playCatch() {
   sfxTone(660, { dur: 0.2, gain: 0.07 });
   sfxTone(990, { dur: 0.35, gain: 0.07, delay: 0.12 });
   playSplash();
+}
+function playHorn() {
+  sfxTone(98, { type: "sawtooth", dur: 1.1, gain: 0.1, attack: 0.04 });
+  sfxTone(123, { type: "sawtooth", dur: 1.1, gain: 0.07, attack: 0.04 });
+  sfxNoise({ filter: "lowpass", freq: 300, dur: 1.1, gain: 0.04 });
 }
 function playCoins() { [1320, 1760, 2093].forEach((f, i) => sfxTone(f, { dur: 0.18, gain: 0.045, delay: i * 0.07 })); }
 function playClick() { sfxTone(1400, { dur: 0.04, type: "square", gain: 0.02 }); }
@@ -5004,9 +5043,9 @@ function drawBoatWake(screenX, surfaceY, bob) {
   const t = performance.now() * 0.003;
   const y = surfaceY + bob + 2;
 
-  // Foam wake behind boat
+  // Foam wake behind boat (the turbo churns up much more)
   ctx.save();
-  ctx.globalAlpha = 0.3;
+  ctx.globalAlpha = boostActive ? 0.65 : 0.3;
   for (let side = -1; side <= 1; side += 2) {
     ctx.beginPath();
     ctx.moveTo(screenX + side * 45, y + 20);
@@ -5215,7 +5254,23 @@ function drawBoatRods(bob) {
   boatRods.forEach((r) => drawBoatRod(r, waterY, t));
 }
 
+// The boat grows with the hull upgrade: a battered old barge, the fishing cutter, a trawler, an expedition ship
+const BOAT_MODELS = [
+  null,
+  { name: "Stará bárka",   hull: ["#7a5a36", "#5a3e24", "#2e1e12"], trim: "#9a8460" },
+  { name: "Rybářský kutr", hull: ["#a3362a", "#7a2020", "#3e0f10"], trim: "#d8cfc0" },
+  { name: "Trawler",       hull: ["#2f6a8e", "#1f4a6a", "#0f2a3e"], trim: "#e4e0d4" },
+  { name: "Expediční loď", hull: ["#7a8794", "#55616d", "#2a323b"], trim: "#eef0f2" }
+];
+
+function getBoatModel() {
+  return Math.max(1, Math.min(4, upgrades.hull));
+}
+
 function drawBoatSide(screenX, surfaceY, bob) {
+  const m = getBoatModel();
+  const model = BOAT_MODELS[m];
+  const night = 1 - getDaylightFactor();
   const y = surfaceY - 8 + bob;
   ctx.save();
   ctx.translate(screenX, y);
@@ -5224,9 +5279,9 @@ function drawBoatSide(screenX, surfaceY, bob) {
 
   // 1. Hull Base (layered red-brown, lit from above)
   const hullGrad = ctx.createLinearGradient(0, -4, 0, 26);
-  hullGrad.addColorStop(0, "#a3362a");
-  hullGrad.addColorStop(0.45, "#7a2020");
-  hullGrad.addColorStop(1, "#3e0f10");
+  hullGrad.addColorStop(0, model.hull[0]);
+  hullGrad.addColorStop(0.45, model.hull[1]);
+  hullGrad.addColorStop(1, model.hull[2]);
   ctx.fillStyle = hullGrad;
   ctx.beginPath();
   ctx.moveTo(-85, -4);
@@ -5246,9 +5301,26 @@ function drawBoatSide(screenX, surfaceY, bob) {
   }
   ctx.fillStyle = "rgba(12,16,18,0.4)";
   ctx.fillRect(-82, 5, 168, 4);
+  if (m === 1) {
+    // Old wooden planks, patched with mismatched boards
+    ctx.strokeStyle = "rgba(20,10,4,0.5)";
+    ctx.lineWidth = 1;
+    for (let r = 0; r < 3; r++) {
+      ctx.beginPath();
+      ctx.moveTo(-82, 2 + r * 6);
+      ctx.lineTo(88, 2 + r * 6);
+      ctx.stroke();
+    }
+    ctx.fillStyle = "#8a6c40";
+    ctx.fillRect(-44, 0, 18, 9);
+    ctx.fillRect(30, 6, 13, 8);
+    ctx.strokeStyle = "rgba(20,10,4,0.6)";
+    ctx.strokeRect(-44, 0, 18, 9);
+    ctx.strokeRect(30, 6, 13, 8);
+  }
 
-  // 2. White hull upper trim
-  ctx.fillStyle = "#d8cfc0";
+  // 2. Hull upper trim
+  ctx.fillStyle = model.trim;
   ctx.beginPath();
   ctx.moveTo(-86, -10);
   ctx.lineTo(74, -10);
@@ -5268,7 +5340,76 @@ function drawBoatSide(screenX, surfaceY, bob) {
   ctx.closePath();
   ctx.fill();
 
-  // 4. Cabin at the stern (back, left side)
+  // 4. Superstructure at the stern (left side, which now leads)
+  if (m === 1) {
+    // A plank shack with a crooked tin roof
+    ctx.fillStyle = "#3a2a1a";
+    ctx.fillRect(-62, -40, 40, 30);
+    ctx.strokeStyle = "rgba(15,8,3,0.55)";
+    ctx.lineWidth = 1;
+    for (let px = -56; px < -22; px += 7) {
+      ctx.beginPath();
+      ctx.moveTo(px, -40);
+      ctx.lineTo(px, -10);
+      ctx.stroke();
+    }
+    ctx.fillStyle = "#5a4630";
+    ctx.fillRect(-36, -32, 11, 14);
+    ctx.fillStyle = `rgba(255,200,120,${0.18 + night * 0.7})`;
+    ctx.fillRect(-56, -34, 11, 9);
+    ctx.strokeStyle = "#6a4a2c";
+    ctx.lineWidth = 1.4;
+    ctx.strokeRect(-56, -34, 11, 9);
+    ctx.fillStyle = "#6a6e6c";
+    ctx.beginPath();
+    ctx.moveTo(-68, -38);
+    ctx.lineTo(-18, -44);
+    ctx.lineTo(-17, -40);
+    ctx.lineTo(-68, -34);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "rgba(120,60,28,0.55)";
+    ctx.fillRect(-52, -42, 9, 2);
+    ctx.fillRect(-30, -43, 7, 2);
+    // the lamp is lashed to a pole in front of the shack
+    ctx.fillStyle = "#2a1c10";
+    ctx.fillRect(-73, -52, 3, 14);
+  } else if (m === 4) {
+    // Two-deck white superstructure with a bridge, radome and a striped funnel
+    ctx.fillStyle = "#dde1e5";
+    ctx.fillRect(-72, -58, 58, 48);
+    ctx.fillStyle = "rgba(0,0,0,0.12)";
+    ctx.fillRect(-26, -58, 12, 48);
+    ctx.fillStyle = `rgba(255,205,130,${0.2 + night * 0.7})`;
+    ctx.fillRect(-68, -48, 48, 8);
+    ctx.fillRect(-68, -32, 48, 8);
+    ctx.strokeStyle = "#31404c";
+    ctx.lineWidth = 1.4;
+    ctx.strokeRect(-68, -48, 48, 8);
+    ctx.strokeRect(-68, -32, 48, 8);
+    ctx.fillStyle = "#d4d8dc";
+    ctx.fillRect(-64, -80, 40, 22);
+    ctx.fillStyle = `rgba(255,205,130,${0.2 + night * 0.7})`;
+    ctx.fillRect(-62, -75, 36, 9);
+    ctx.strokeStyle = "#31404c";
+    ctx.strokeRect(-62, -75, 36, 9);
+    ctx.fillStyle = "#2a323b";
+    ctx.fillRect(-67, -84, 46, 5);
+    ctx.fillStyle = "#f2f4f6";
+    ctx.beginPath();
+    ctx.arc(-43, -92, 7, Math.PI, 0);
+    ctx.fill();
+    ctx.fillStyle = "#c8452c";
+    ctx.fillRect(-27, -72, 12, 18);
+    ctx.fillStyle = "#1a1a1c";
+    ctx.fillRect(-27, -72, 12, 4);
+    ctx.fillStyle = "#e8933a";
+    ctx.beginPath();
+    ctx.ellipse(4, -14, 13, 5, 0, Math.PI, 0);
+    ctx.fill();
+    ctx.fillStyle = "#3a3026";
+    ctx.fillRect(-75, -52, 3, 3);
+  } else {
   ctx.fillStyle = "#2c2018";
   ctx.fillRect(-68, -44, 52, 34);
 
@@ -5277,7 +5418,6 @@ function drawBoatSide(screenX, surfaceY, bob) {
   ctx.fillRect(-64, -40, 44, 30);
 
   // Framed wheelhouse windows; the lamplight inside grows with the dark
-  const night = 1 - getDaylightFactor();
   [[-60, -36], [-38, -36]].forEach(([wx, wy]) => {
     ctx.fillStyle = "#1a2830";
     ctx.fillRect(wx, wy, 16, 13);
@@ -5326,6 +5466,33 @@ function drawBoatSide(screenX, surfaceY, bob) {
   // Cabin roof (overhanging)
   ctx.fillStyle = "#1e1612";
   ctx.fillRect(-72, -48, 60, 6);
+  if (m === 3) {
+    // Upper wheelhouse and a taller mast: the cutter grown into a trawler
+    ctx.fillStyle = "#2c2018";
+    ctx.fillRect(-62, -70, 38, 22);
+    ctx.fillStyle = "#c8b898";
+    ctx.fillRect(-59, -67, 32, 16);
+    ctx.fillStyle = `rgba(255,205,130,${0.2 + night * 0.7})`;
+    ctx.fillRect(-57, -64, 28, 8);
+    ctx.strokeStyle = "#6a4a2c";
+    ctx.lineWidth = 1.4;
+    ctx.strokeRect(-57, -64, 28, 8);
+    ctx.fillStyle = "#1e1612";
+    ctx.fillRect(-66, -73, 46, 4);
+    ctx.strokeStyle = "#2a2018";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-43, -73);
+    ctx.lineTo(-43, -92);
+    ctx.moveTo(-50, -85);
+    ctx.lineTo(-36, -85);
+    ctx.stroke();
+    ctx.fillStyle = "rgba(255,70,50,0.8)";
+    ctx.beginPath();
+    ctx.arc(-43, -93, 1.6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  }
 
   // 5. Open deck railing at the front (right side)
   ctx.strokeStyle = "#3a2d25";
@@ -5855,7 +6022,10 @@ function buyShipUpgrade(type) {
   if (type === "engine") {
     player.speed = 2.8 + (upgrades.engine - 1) * 0.9;
   }
-  if (type === "hull") updateInventoryUI();
+  if (type === "hull") {
+    updateInventoryUI();
+    showToast(`Nová loď: ${BOAT_MODELS[getBoatModel()].name}`, "230,200,120");
+  }
 
   updateOilRigUI();
   if (oilrigResultEl) {
@@ -6315,6 +6485,10 @@ function restartGame() {
 
   gameOver = false;
   hullDamage = 0;
+  boost = BOOST_MAX;
+  boostLocked = false;
+  floatCrates.length = 0;
+  crateTimer = 25;
   gear.length = 0;
   gearStash = [];
   danger = 0;
@@ -7428,6 +7602,10 @@ function drawRouteMap() {
     ctx.fill();
   });
 
+  // Floating crates
+  ctx.fillStyle = "rgba(255,210,100,0.9)";
+  floatCrates.forEach((c) => ctx.fillRect(toX(c.wx) - 1.5, mid - 5, 3, 3));
+
   // Landmarks: harbour, lighthouse (blinking), oil rig
   const hx = toX(HARBOUR_WX);
   ctx.fillStyle = "#e8c070";
@@ -7472,7 +7650,7 @@ function saveGame() {
   const data = {
     v: 1,
     gold,
-    inventory: inventory.map((f) => ({ id: f.id, weight: f.weight, caughtAt: f.caughtAt, gx: f.gx, gy: f.gy, rot: f.rot })),
+    inventory: inventory.map((f) => ({ id: f.id, weight: f.weight, caughtAt: f.caughtAt, perfect: f.perfect, gx: f.gx, gy: f.gy, rot: f.rot })),
     hullDamage,
     gear: gear.map((x) => ({ id: x.gear, gx: x.gx, gy: x.gy, rot: x.rot })),
     gearStash,
@@ -7520,6 +7698,10 @@ function loadGame() {
     if (!sp) return;
     const f = makeCaughtFish(sp, it.weight);
     f.caughtAt = it.caughtAt;
+    if (it.perfect) {
+      f.perfect = true;
+      f.price = Math.round(f.price * 1.25);
+    }
     const rot = it.rot ? 1 : 0;
     if (Number.isInteger(it.gx) && Number.isInteger(it.gy) && cargoFits(f, it.gx, it.gy, rot, null)) {
       Object.assign(f, { gx: it.gx, gy: it.gy, rot });
@@ -7610,6 +7792,13 @@ const CONTRACT_SLOTS = 3;
 const LIGHTHOUSE_SAFE_RADIUS = 600;
 
 let contracts = [];          // { speciesId, count, done, reward }
+const BOOST_MAX = 100;
+const BOOST_DRAIN = 34;              // per second while the turbo burns
+const BOOST_REGEN = 11;              // per second while it rests
+const BOOST_SPEED = 1.65;
+let boost = BOOST_MAX;
+let boostActive = false;
+let boostLocked = false;             // after running dry the turbo needs a moment to cool down
 const HULL_SLOTS = 3;
 const HULL_SLOWDOWN = 0.12;          // speed lost per damaged slot
 const HULL_REPAIR_COST = 40;         // per damaged slot, at the harbour
@@ -7726,6 +7915,110 @@ function settleContracts(sold) {
     showToast(`Zakázka splněna: ${names} (+$${bonus})`, "140,230,160");
   }
   return bonus;
+}
+
+// --- Floating crates: flotsam on the sea to sail up to ---
+
+const CRATE_KINDS = [
+  { id: "cargo",  col: "#a8803c", w: 5 },
+  { id: "cells",  col: "#3c9a6a", w: 3 },
+  { id: "repair", col: "#4a78b8", w: 2 },
+  { id: "charm",  col: "#9a4a9a", w: 1.5 }
+];
+const floatCrates = [];
+let crateTimer = 25;
+
+function updateCrates(dt) {
+  crateTimer -= dt;
+  if (crateTimer <= 0) {
+    crateTimer = 40 + Math.random() * 40;
+    if (floatCrates.length < 3) {
+      let r = Math.random() * CRATE_KINDS.reduce((n, k) => n + k.w, 0);
+      const kind = CRATE_KINDS.find((k) => (r -= k.w) < 0) || CRATE_KINDS[0];
+      const side = Math.random() < 0.5 ? -1 : 1;
+      const half = worldWidth / 2 - 200;
+      const wx = Math.max(-half, Math.min(half, player.x + side * (700 + Math.random() * 900)));
+      floatCrates.push({ wx, kind, phase: Math.random() * 6 });
+      showToast(`Na hladině se houpe bedna — ${side < 0 ? "vlevo" : "vpravo"}.`, "220,200,140");
+    }
+  }
+  for (let i = floatCrates.length - 1; i >= 0; i--) {
+    const c = floatCrates[i];
+    if (Math.abs(c.wx - player.x) < 60) {
+      collectCrate(c);
+      floatCrates.splice(i, 1);
+    } else if (Math.abs(c.wx - player.x) > 4000) {
+      floatCrates.splice(i, 1);
+    }
+  }
+}
+
+function collectCrate(c) {
+  playPing();
+  if (c.kind.id === "cargo") {
+    const reward = 30 + Math.floor(Math.random() * 61);
+    gold += reward;
+    if (goldUI) goldUI.innerText = gold;
+    playCoins();
+    showToast(`Bedna s nákladem: +$${reward}`, "255,225,140");
+  } else if (c.kind.id === "cells") {
+    battery = Math.min(BATTERY_MAX, battery + 35);
+    showToast("Zásoby baterií: světlo dobito o 35 %", "140,230,170");
+  } else if (c.kind.id === "repair" && hullDamage > 0) {
+    hullDamage--;
+    showToast("Opravářská sada: jeden slot trupu opraven", "140,190,255");
+  } else if (c.kind.id === "repair") {
+    gold += 40;
+    if (goldUI) goldUI.innerText = gold;
+    showToast("Opravářská sada: trup je celý, prodáno za $40", "255,225,140");
+  } else {
+    addDanger(-2);
+    showToast("Podivný talisman: mysl se zklidnila", "200,160,230");
+  }
+}
+
+function drawCrates(surfaceY) {
+  const t = performance.now() * 0.001;
+  const dark = 1 - getDaylightFactor();
+  floatCrates.forEach((c, i) => {
+    const sx = c.wx - camera.x;
+    if (sx < -30 || sx > canvas.width + 30) return;
+    const bob = Math.sin(t * 1.6 + c.phase) * 2;
+    ctx.save();
+    ctx.translate(sx, surfaceY + 2 + bob);
+    ctx.rotate(Math.sin(t * 1.1 + c.phase) * 0.08);
+    ctx.fillStyle = c.kind.col;
+    ctx.fillRect(-10, -13, 20, 14);
+    ctx.fillStyle = "rgba(0,0,0,0.25)";
+    ctx.fillRect(-10, -6, 20, 2);
+    ctx.strokeStyle = "rgba(30,16,6,0.8)";
+    ctx.lineWidth = 1.2;
+    ctx.strokeRect(-10, -13, 20, 14);
+    ctx.beginPath();
+    ctx.moveTo(-10, -13);
+    ctx.lineTo(10, 1);
+    ctx.moveTo(10, -13);
+    ctx.lineTo(-10, 1);
+    ctx.stroke();
+    // A flag with a blinking lamp, so it can be spotted across the water
+    ctx.strokeStyle = "#2a1c10";
+    ctx.beginPath();
+    ctx.moveTo(7, -13);
+    ctx.lineTo(7, -28);
+    ctx.stroke();
+    const on = (t + i * 0.6) % 1.6 < 0.5;
+    ctx.fillStyle = on ? "rgba(255,210,100,1)" : "rgba(120,90,40,0.7)";
+    ctx.beginPath();
+    ctx.arc(7, -29, 2.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    if (on && dark > 0.2) shoreLights.push({ x: sx + 7, a: 0.8 * dark, rgb: "255,210,100" });
+    ctx.strokeStyle = "rgba(200,225,235,0.3)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.ellipse(sx, surfaceY + 4, 14 + Math.sin(t * 2 + i) * 2, 2.5, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  });
 }
 
 // --- Attacks from the deep ---
@@ -8692,6 +8985,7 @@ function gameLoop() {
 
   updateBatteryHud();
   updateHullHud();
+  updateBoostHud();
 
   ctx.save();
 
@@ -8781,6 +9075,7 @@ function gameLoop() {
   drawWaterSurface(surfaceY);
   drawGlitterPath(surfaceY);
   drawBuoys(surfaceY);
+  drawCrates(surfaceY);
   drawShoreReflections(surfaceY, screenBoatX);
   drawRainRipples(surfaceY);
   drawDetektorHints(surfaceY);

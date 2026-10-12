@@ -319,6 +319,43 @@ canvas {
   min-width: 1.8em;
 }
 
+#boost-wrap {
+  margin-top: 5px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  transition: opacity 0.3s ease;
+}
+
+#boost-label {
+  font-family: "Cinzel", serif;
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #a08a5a;
+  min-width: 5.6em;
+}
+
+#boost-track {
+  flex: 1;
+  height: 5px;
+  background: rgba(70, 50, 20, 0.35);
+  border-radius: 3px;
+  overflow: hidden;
+  border: 1px solid rgba(110, 80, 40, 0.45);
+}
+
+#boost-fill {
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, #a06a20, #f0b848);
+  border-radius: 3px;
+  box-shadow: 0 0 6px rgba(240, 180, 70, 0.4);
+}
+
+#boost-fill.low { background: linear-gradient(90deg, #6a3a20, #a05a30); }
+#boost-wrap.active #boost-fill { box-shadow: 0 0 10px rgba(255, 200, 90, 0.9); }
+
 #hull-wrap {
   margin-top: 5px;
   display: flex;

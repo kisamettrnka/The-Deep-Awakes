@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Temné moře</title>
   <link rel="icon" type="image/png" href="favicon.png">
-  <link rel="stylesheet" href="style.css?v=8">
+  <link rel="stylesheet" href="style.css?v=9">
   <link rel="stylesheet" href="fishing-minigame.css?v=15">
   <link rel="stylesheet" href="detektor-minigame.css?v=4">
   <link rel="stylesheet" href="market.css?v=7">
@@ -47,6 +47,10 @@
         <span id="hull-label">Trup</span>
         <div id="hull-slots"><i></i><i></i><i></i></div>
       </div>
+      <div id="boost-wrap" title="Turbo — drž Shift při plavbě; po vyčerpání chvíli chladne">
+        <span id="boost-label">Turbo</span>
+        <div id="boost-track"><div id="boost-fill"></div></div>
+      </div>
     </aside>
 
     <div id="hud-center">
@@ -64,7 +68,7 @@
   <div id="toast-stack" aria-live="polite"></div>
 
   <div id="hud-bottom">
-    <div id="keys-hint"><kbd>A</kbd> <kbd>D</kbd> plavba · bubliny <kbd>SPACE</kbd> · detektor <kbd>F</kbd> · inventář <kbd>I</kbd> · kotviště <kbd>E</kbd> · deník <kbd>J</kbd> · světlo <kbd>L</kbd> · <span id="sound-state">zvuk</span> <kbd>M</kbd></div>
+    <div id="keys-hint"><kbd>A</kbd> <kbd>D</kbd> plavba · bubliny <kbd>SPACE</kbd> · detektor <kbd>F</kbd> · inventář <kbd>I</kbd> · kotviště <kbd>E</kbd> · deník <kbd>J</kbd> · světlo <kbd>L</kbd> · <span id="sound-state">zvuk</span> <kbd>M</kbd> · turbo <kbd>Shift</kbd> · roh <kbd>H</kbd></div>
   </div>
 
 <!-- FISH JOURNAL -->
@@ -349,6 +353,6 @@
 <canvas id="game"></canvas>
 
 <script src="fish-data.js?v=10"></script>
-<script src="game.js?v=38"></script>
+<script src="game.js?v=39"></script>
 </body>
 </html>
