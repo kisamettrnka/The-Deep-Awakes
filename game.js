@@ -154,6 +154,7 @@ const LIGHTHOUSE_WX = 2550; // on its cliff just west of the harbour
 const HARBOUR_WX = 2720;    // the pier where the boat docks
 const TOWN_WX = 3020;       // the village on the hills behind the harbour
 const START_X = 2200;       // where every voyage begins
+const LIGHTHOUSE_NO_FISH_RADIUS = 500;   // no fishing spots around the lighthouse
 const LIGHTHOUSE_CLIFF_W = 260;
 const LIGHTHOUSE_CLIFF_H = 170;
 
@@ -333,6 +334,9 @@ function seedWorld() {
       reef: true
     });
   }
+
+  // The lighthouse cliff and its rocks leave no room for fishing: those spots stay (saves index them) but are dead
+  bubbleSpots.forEach((b) => { b.blocked = Math.abs(b.wx - LIGHTHOUSE_WX) < LIGHTHOUSE_NO_FISH_RADIUS; });
 }
 
 seedWorld();
@@ -409,7 +413,7 @@ function getBubbleNearPlayer() {
   let bestD = getBubbleActivateRadius();
   for (let i = 0; i < bubbleSpots.length; i++) {
     const spot = bubbleSpots[i];
-    if (spot.stock < 1) continue;
+    if (spot.blocked || spot.stock < 1) continue;
     const d = Math.abs(spot.wx - player.x);
     if (d < bestD) {
       bestD = d;
@@ -3513,6 +3517,7 @@ function drawWaterSurface(surfaceY) {
 function drawBubbles(surfaceY) {
   const t = performance.now() * 0.0022;
   bubbleSpots.forEach((b) => {
+    if (b.blocked) return;
     const sx = b.wx - camera.x;
     if (sx < -40 || sx > canvas.width + 40) return;
     const by = surfaceY - 6 + Math.sin(t + b.phase) * 3;
@@ -7581,7 +7586,7 @@ function drawRouteMap() {
 
   // Discovered fishing spots: bright while they still hold fish
   bubbleSpots.forEach((b) => {
-    if (!b.discovered) return;
+    if (!b.discovered || b.blocked) return;
     ctx.fillStyle = b.stock > 0 ? "rgba(200,232,255,0.8)" : "rgba(200,232,255,0.18)";
     ctx.beginPath();
     ctx.arc(toX(b.wx), mid, 1.6, 0, Math.PI * 2);
@@ -9080,6 +9085,11 @@ function gameLoop() {
   drawRainRipples(surfaceY);
   drawDetektorHints(surfaceY);
 
+  // === LIGHTHOUSE === (the boat sails in front of the cliff, not behind it)
+  drawLighthouseCliff(surfaceY);
+  drawCliffPines(surfaceY);
+  drawLighthouseTower(surfaceY);
+
   // === BOAT ===
   drawBoatWake(screenBoatX, surfaceY, bob);
 
@@ -9097,11 +9107,6 @@ function gameLoop() {
   drawBoatSide(screenBoatX, surfaceY, bob);
   drawTentacles(surfaceY);
   drawSceneReflection(surfaceY);
-
-  // === FOREGROUND: LIGHTHOUSE ===
-  drawLighthouseCliff(surfaceY);
-  drawCliffPines(surfaceY);
-  drawLighthouseTower(surfaceY);
 
   // === ATMOSPHERIC EFFECTS ===
   drawFogLayers(surfaceY, "front");
