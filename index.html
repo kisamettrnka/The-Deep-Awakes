@@ -100,6 +100,7 @@
       <div class="dock-menu-buttons">
         <div id="gear-stash" class="hidden"></div>
         <button id="btn-open-market" class="market-btn">Prodat úlovek (Trh)</button>
+        <button id="btn-open-rods" class="market-btn">Vylepšení prutu</button>
         <button id="btn-repair-hull" class="market-btn">Trup je v pořádku</button>
         <button id="btn-repair-ship" class="market-btn">Odpočinout a zklidnit mysl ($25)</button>
         <button id="btn-leave-dock" class="market-btn btn-secondary">Vyplout na moře</button>
@@ -198,11 +199,11 @@
 </div>
 
 <!-- LIGHTHOUSE SHOP UI -->
-<div id="lighthouse-shop-ui" class="hidden">
+<div id="rod-shop-ui" class="hidden">
   <div class="market-panel">
     <div class="market-header">
-      <h2>Maják</h2>
-      <span class="market-tag">Vylepšení prutu</span>
+      <h2>Vylepšení prutu</h2>
+      <span class="market-tag">Přístav</span>
     </div>
     <div class="market-body">
       <div class="market-row" style="margin-bottom: 12px;">
@@ -226,10 +227,10 @@
         </div>
         <button id="btn-upgrade-rod-bait" class="market-btn" style="width:110px;">$120</button>
       </div>
-      <button id="btn-back-lighthouse" class="market-btn btn-secondary">Zpět k lodi</button>
-      <div id="lighthouse-result" class="market-result hidden"></div>
+      <button id="btn-back-rods" class="market-btn btn-secondary">Zpět</button>
+      <div id="rod-result" class="market-result hidden"></div>
     </div>
-    <div class="market-close-hint">Zpět na moře stisknutím <kbd>E</kbd></div>
+    <div class="market-close-hint">Zpět do menu přístavu stisknutím <kbd>E</kbd></div>
   </div>
 </div>
 
@@ -353,6 +354,6 @@
 <canvas id="game"></canvas>
 
 <script src="fish-data.js?v=10"></script>
-<script src="game.js?v=40"></script>
+<script src="game.js?v=42"></script>
 </body>
 </html>

@@ -48,12 +48,12 @@ const btnBackOilrig = document.getElementById("btn-back-oilrig");
 const oilrigResultEl = document.getElementById("oilrig-result");
 
 // Lighthouse Shop UI elements
-const lighthouseShopUI = document.getElementById("lighthouse-shop-ui");
+const rodShopUI = document.getElementById("rod-shop-ui");
 const btnUpgradeRodQuality = document.getElementById("btn-upgrade-rod-quality");
 const btnUpgradeRodLine = document.getElementById("btn-upgrade-rod-line");
 const btnUpgradeRodBait = document.getElementById("btn-upgrade-rod-bait");
-const btnBackLighthouse = document.getElementById("btn-back-lighthouse");
-const lighthouseResultEl = document.getElementById("lighthouse-result");
+const btnBackRods = document.getElementById("btn-back-rods");
+const rodResultEl = document.getElementById("rod-result");
 
 let fishingMode = false;
 let fishingLocked = false;
@@ -190,7 +190,7 @@ const rodUpgradeCosts = {
 };
 
 let dockActive = false;
-let currentMenu = null; // "dock", "market", "oilrig", "lighthouse", "dialog"
+let currentMenu = null; // "dock", "market", "rods" (from the dock menu), "oilrig", "dialog"
 let dialogueActive = false;
 let dialogueQueue = [];
 let currentDialogue = null;
@@ -1941,8 +1941,6 @@ window.addEventListener("keydown", (e) => {
         openDockMenu();
       } else if (getNearOilRig()) {
         openOilRigMenu();
-      } else if (getNearLighthouse()) {
-        openLighthouseShopMenu();
       }
     }
     return;
@@ -5690,10 +5688,6 @@ function getNearOilRig() {
   return Math.abs(player.x - OILRIG_WX) < 150;
 }
 
-function getNearLighthouse() {
-  return Math.abs(player.x - LIGHTHOUSE_WX) < 160;
-}
-
 function openDockMenu() {
   // The harbour line charges the battery whenever you tie up
   battery = BATTERY_MAX;
@@ -5733,13 +5727,21 @@ function openOilRigMenu() {
   }
 }
 
-function openLighthouseShopMenu() {
-  dockActive = true;
-  currentMenu = "lighthouse";
-  if (lighthouseShopUI) {
-    lighthouseShopUI.classList.remove("hidden");
-    updateLighthouseShopUI();
+// The rod shop is a page of the harbour menu
+function openRodShop() {
+  currentMenu = "rods";
+  if (dockMenuUI) dockMenuUI.classList.add("hidden");
+  if (rodShopUI) {
+    rodShopUI.classList.remove("hidden");
+    updateRodShopUI();
   }
+}
+
+function backToDockMenu() {
+  if (marketUI) marketUI.classList.add("hidden");
+  if (rodShopUI) rodShopUI.classList.add("hidden");
+  if (dockMenuUI) dockMenuUI.classList.remove("hidden");
+  currentMenu = "dock";
 }
 
 function closeAllDockMenus() {
@@ -5748,17 +5750,15 @@ function closeAllDockMenus() {
   if (dockMenuUI) dockMenuUI.classList.add("hidden");
   if (marketUI) marketUI.classList.add("hidden");
   if (oilrigUI) oilrigUI.classList.add("hidden");
-  if (lighthouseShopUI) lighthouseShopUI.classList.add("hidden");
+  if (rodShopUI) rodShopUI.classList.add("hidden");
 }
 
 function handleEKeyInMenu() {
   if (currentMenu === "dock") {
     closeAllDockMenus();
-  } else if (currentMenu === "market") {
-    if (marketUI) marketUI.classList.add("hidden");
-    if (dockMenuUI) dockMenuUI.classList.remove("hidden");
-    currentMenu = "dock";
-  } else if (currentMenu === "oilrig" || currentMenu === "lighthouse") {
+  } else if (currentMenu === "market" || currentMenu === "rods") {
+    backToDockMenu();
+  } else if (currentMenu === "oilrig") {
     closeAllDockMenus();
   }
 }
@@ -5772,6 +5772,8 @@ function initMenuButtons() {
       updateMarketUI();
     });
   }
+  const btnOpenRods = document.getElementById("btn-open-rods");
+  if (btnOpenRods) btnOpenRods.addEventListener("click", openRodShop);
   if (btnRepairShip) {
     const repairLabel = btnRepairShip.textContent;
     btnRepairShip.addEventListener("click", () => {
@@ -5814,17 +5816,13 @@ function initMenuButtons() {
     btnSellFish.addEventListener("click", () => sellAllFish());
   }
   if (btnBackMarket) {
-    btnBackMarket.addEventListener("click", () => {
-      if (marketUI) marketUI.classList.add("hidden");
-      if (dockMenuUI) dockMenuUI.classList.remove("hidden");
-      currentMenu = "dock";
-    });
+    btnBackMarket.addEventListener("click", backToDockMenu);
   }
   if (btnBackOilrig) {
     btnBackOilrig.addEventListener("click", () => closeAllDockMenus());
   }
-  if (btnBackLighthouse) {
-    btnBackLighthouse.addEventListener("click", () => closeAllDockMenus());
+  if (btnBackRods) {
+    btnBackRods.addEventListener("click", backToDockMenu);
   }
   if (btnUpgradeEngine) btnUpgradeEngine.addEventListener("click", () => buyShipUpgrade("engine"));
   if (btnUpgradeLights) btnUpgradeLights.addEventListener("click", () => buyShipUpgrade("lights"));
@@ -6062,7 +6060,7 @@ function buyRechargeKit() {
   }
 }
 
-function updateLighthouseShopUI() {
+function updateRodShopUI() {
   const types = ["quality", "line", "bait"];
   types.forEach(type => {
     const lvl = rodUpgrades[type];
@@ -6084,8 +6082,8 @@ function updateLighthouseShopUI() {
       }
     }
   });
-  if (lighthouseResultEl) {
-    lighthouseResultEl.classList.add("hidden");
+  if (rodResultEl) {
+    rodResultEl.classList.add("hidden");
   }
 }
 
@@ -6095,10 +6093,10 @@ function buyRodUpgrade(type) {
 
   const cost = rodUpgradeCosts[type][lvl - 1];
   if (gold < cost) {
-    if (lighthouseResultEl) {
-      lighthouseResultEl.textContent = "Nedostatek peněz!";
-      lighthouseResultEl.className = "market-result bad";
-      lighthouseResultEl.classList.remove("hidden");
+    if (rodResultEl) {
+      rodResultEl.textContent = "Nedostatek peněz!";
+      rodResultEl.className = "market-result bad";
+      rodResultEl.classList.remove("hidden");
     }
     return;
   }
@@ -6110,11 +6108,11 @@ function buyRodUpgrade(type) {
 
   if (type === "quality") initFishingRingSvg();
 
-  updateLighthouseShopUI();
-  if (lighthouseResultEl) {
-    lighthouseResultEl.textContent = `Vylepšení zakoupeno!`;
-    lighthouseResultEl.className = "market-result ok";
-    lighthouseResultEl.classList.remove("hidden");
+  updateRodShopUI();
+  if (rodResultEl) {
+    rodResultEl.textContent = `Vylepšení zakoupeno!`;
+    rodResultEl.className = "market-result ok";
+    rodResultEl.classList.remove("hidden");
   }
 }
 
@@ -7024,8 +7022,8 @@ function drawGulls(surfaceY) {
 
 // --- NPC ships: several hull types, sailing at different depths of field ---
 
-const NPC_BOAT_MODELS = ["rowboat", "trawler", "steamer", "skiff"];
-const NPC_BOAT_SPEED = { rowboat: 9, trawler: 12, steamer: 10, skiff: 34 };
+const NPC_BOAT_MODELS = ["rowboat", "trawler", "steamer"];
+const NPC_BOAT_SPEED = { rowboat: 9, trawler: 12, steamer: 10 };
 const npcBoats = [];
 for (let i = 0; i < 8; i++) {
   const model = NPC_BOAT_MODELS[i % NPC_BOAT_MODELS.length];
@@ -7262,59 +7260,10 @@ function drawNpcSteamer(t, night) {
   ctx.fill();
 }
 
-function drawNpcSkiff(t, night) {
-  // Sleek planing hull, bow lifted
-  ctx.save();
-  ctx.rotate(-0.04);
-  ctx.fillStyle = hc(160, 166, 170);
-  ctx.beginPath();
-  ctx.moveTo(-40, -12);
-  ctx.lineTo(42, -14);
-  ctx.quadraticCurveTo(50, -10, 46, -4);
-  ctx.quadraticCurveTo(30, 5, 10, 6);
-  ctx.lineTo(-38, 6);
-  ctx.closePath();
-  ctx.fill();
-  ctx.fillStyle = hc(150, 110, 40);
-  ctx.fillRect(-38, -6, 82, 3);
-  // Console + windscreen
-  ctx.fillStyle = hc(60, 66, 72);
-  ctx.fillRect(-6, -26, 18, 14);
-  ctx.fillStyle = hc(140, 170, 190, 0.6);
-  ctx.beginPath();
-  ctx.moveTo(12, -26);
-  ctx.lineTo(18, -16);
-  ctx.lineTo(12, -16);
-  ctx.fill();
-  // Pilot
-  ctx.fillStyle = hc(140, 60, 40);
-  ctx.fillRect(-16, -28, 8, 14);
-  ctx.fillStyle = hc(170, 140, 115);
-  ctx.beginPath();
-  ctx.arc(-12, -31, 4, 0, Math.PI * 2);
-  ctx.fill();
-  // Outboard motor
-  ctx.fillStyle = hc(30, 30, 34);
-  ctx.fillRect(-46, -16, 8, 14);
-  // Antenna
-  ctx.strokeStyle = hc(50, 50, 55);
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(4, -26);
-  ctx.lineTo(0, -52);
-  ctx.stroke();
-  ctx.fillStyle = `rgba(255,80,60,${0.3 + night * 0.7 * (Math.sin(t * 5) > 0 ? 1 : 0.3)})`;
-  ctx.beginPath();
-  ctx.arc(0, -53, 1.8, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
-}
-
 const NPC_DRAWERS = {
   rowboat: drawNpcRowboat,
   trawler: drawNpcTrawler,
-  steamer: drawNpcSteamer,
-  skiff: drawNpcSkiff
+  steamer: drawNpcSteamer
 };
 
 function drawNpcWake(len, speedFactor, alpha) {
@@ -7331,7 +7280,7 @@ function drawNpcWake(len, speedFactor, alpha) {
   }
 }
 
-const NPC_HULL_LEN = { rowboat: 70, trawler: 156, steamer: 232, skiff: 90 };
+const NPC_HULL_LEN = { rowboat: 70, trawler: 156, steamer: 232 };
 
 function drawNpcBoats(surfaceY) {
   const t = performance.now() / 1000;
@@ -7379,7 +7328,6 @@ function drawWorldPrompts(surfaceY) {
   if (getDetektorSpotNearPlayer()) prompts.push(["F", "detektor / hledání pokladu", "180,230,210"]);
   if (getNearDock()) prompts.push(["E", "zakotvit v přístavu", "255,230,160"]);
   else if (getNearOilRig()) prompts.push(["E", "ropná věž — vylepšení lodi", "255,210,140"]);
-  else if (getNearLighthouse()) prompts.push(["E", "maják — vylepšení prutu", "255,230,160"]);
   if (!prompts.length) return;
 
   ctx.save();
