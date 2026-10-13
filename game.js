@@ -1,6 +1,6 @@
 // =====================================================================
 // THE DEEP AWAKES — Game Engine
-// DREDGE-style visuals with foreground lighthouse
+// Painterly side-view visuals with a foreground lighthouse
 // =====================================================================
 
 const canvas = document.getElementById("game");
@@ -1993,8 +1993,9 @@ function update() {
   // player.speed is tuned in pixels per 60 Hz frame; scale by real time so
   // high-refresh monitors don't sail faster
   const f60 = frameDt * 60;
-  const goLeft = keys["a"] || keys["arrowleft"];
-  const goRight = keys["d"] || keys["arrowright"];
+  const castingOff = !moor.active && moor.t > 0;
+  const goLeft = (keys["a"] || keys["arrowleft"]) && !castingOff;
+  const goRight = (keys["d"] || keys["arrowright"]) && !castingOff;
   // Turbo (Shift): a burst of speed that drains its own meter and recovers while you ease off
   const moving = goLeft || goRight;
   boostActive = !!keys["shift"] && moving && !boostLocked && boost > 0;
@@ -2143,7 +2144,7 @@ function formatTime(h) {
 
 
 // =====================================================================
-// RENDERING — DREDGE-STYLE VISUALS
+// RENDERING — PAINTERLY SIDE-VIEW VISUALS
 // =====================================================================
 
 function drawSky(surfaceY) {
@@ -2514,102 +2515,201 @@ function drawPineForest(surfaceY, parallax, yOff, seed, spacing, scale) {
   }
 }
 
-function drawTownBuildings(surfaceY) {
-  // The village climbs the hills behind the harbour: two rows of houses and a church
-  const townSx = canvas.width / 2 + (TOWN_WX - player.x) * 0.25;
-  if (townSx < -800 || townSx > canvas.width + 800) return;
-  const dark = 1 - getDaylightFactor();
-  const now = performance.now() / 1000;
-  const wall = [[58, 46, 40], [66, 52, 42], [48, 44, 46], [72, 58, 48]];
-  const roofs = [[34, 20, 18], [26, 22, 28], [44, 24, 18]];
+const VILLAGE_WALLS = [[210, 198, 176], [196, 170, 128], [168, 92, 72], [110, 126, 140], [188, 176, 150], [150, 120, 90]];
+const VILLAGE_ROOFS = [[92, 48, 40], [56, 52, 64], [84, 60, 44], [70, 74, 80]];
 
-  for (let row = 0; row < 2; row++) {
-    const count = row ? 17 : 24;
-    for (let i = 0; i < count; i++) {
-      const k = i + row * 40;
-      const sx = townSx + (i - count / 2) * (row ? 56 : 44) + hash(k * 7) * 18;
-      if (sx < -30 || sx > canvas.width + 30) continue;
-      const bw = 20 + hash(k * 3) * 14;
-      const bh = 24 + hash(k + 1) * 24;
-      // Back row sits higher up the slope
-      const gy = coastTopY(surfaceY, sx, 0.25, 5) - bh * 0.45 + hash(k) * 6 - row * 16;
-      const w = wall[Math.floor(hash(k * 5) * wall.length)];
-      const r = roofs[Math.floor(hash(k * 9) * roofs.length)];
-      const shade = row ? 0.7 : 1;
+// The hill the village climbs. It blends into the ordinary coast at its edges, but around the
+// village it has its own profile, so the village looks the same at any window size.
+function villageHillY(surfaceY, sx, townSx) {
+  const d = (sx - townSx) / 340;
+  const own = surfaceY - 66 - 96 * Math.exp(-d * d);
+  const w = Math.exp(-((d / 1.7) ** 2));
+  const coast = coastTopY(surfaceY, sx, 0.25, 5);
+  return coast + (own - coast) * w;
+}
 
-      ctx.fillStyle = `rgb(${w[0] * shade},${w[1] * shade},${w[2] * shade})`;
-      ctx.fillRect(sx - bw / 2, gy, bw, bh);
-      // Dark side and timber beams
-      ctx.fillStyle = "rgba(0,0,0,0.25)";
-      ctx.fillRect(sx + bw * 0.15, gy, bw * 0.35, bh);
-      ctx.fillStyle = "rgba(20,12,8,0.45)";
-      ctx.fillRect(sx - bw / 2, gy + bh * 0.45, bw, 1.5);
-      ctx.fillRect(sx - 0.7, gy, 1.4, bh);
+function drawSmallPine(sx, groundY, treeH, scale) {
+  const treeW = treeH * 0.22;
+  ctx.fillStyle = "#0a0806";
+  ctx.fillRect(sx - 1, groundY - treeH * 0.15, 2, treeH * 0.15);
+  for (let l = 0; l < 3; l++) {
+    const t = l / 3;
+    const bot = groundY - treeH * 0.15 - treeH * 0.85 * t;
+    pineTier(sx, sx, bot - treeH * 0.34, bot + 2, treeW * (1.15 - t * 0.55), scale, l % 2 ? "#08100a" : "#0a140c");
+  }
+}
 
-      // Steep roof with an overhang
-      const rh = 11 + hash(k * 9) * 9;
-      ctx.fillStyle = `rgb(${r[0] * shade},${r[1] * shade},${r[2] * shade})`;
+function drawVillageHouse(V, sx, ground, bw, bh, k, fogK, front) {
+  const gy = ground - bh;
+  const w = VILLAGE_WALLS[Math.floor(hash(k * 5) * VILLAGE_WALLS.length)];
+  const r = VILLAGE_ROOFS[Math.floor(hash(k * 9) * VILLAGE_ROOFS.length)];
+  const col = (c, f = fogK) => mixRgb(c.map((v) => v * V.lightK), V.tint, f);
+
+  ctx.fillStyle = col(w);
+  ctx.fillRect(sx - bw / 2, gy, bw, bh);
+  ctx.fillStyle = "rgba(0,0,0,0.2)";
+  ctx.fillRect(sx + bw * 0.12, gy, bw * 0.38, bh);
+  if (hash(k * 3.3) > 0.5) {
+    ctx.fillStyle = "rgba(40,24,16,0.5)";
+    ctx.fillRect(sx - bw / 2, gy + bh * 0.46, bw, 1.6);
+    ctx.fillRect(sx - 0.8, gy, 1.6, bh);
+  }
+
+  // Steep roof with eaves
+  const rh = 10 + hash(k * 9) * 10;
+  ctx.fillStyle = col(r);
+  ctx.beginPath();
+  ctx.moveTo(sx - bw / 2 - 4, gy + 1);
+  ctx.lineTo(sx - 1, gy - rh);
+  ctx.lineTo(sx + 1, gy - rh);
+  ctx.lineTo(sx + bw / 2 + 4, gy + 1);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = "rgba(150,135,170,0.14)";
+  ctx.beginPath();
+  ctx.moveTo(sx - bw / 2 - 4, gy + 1);
+  ctx.lineTo(sx - 1, gy - rh);
+  ctx.lineTo(sx - 1, gy - rh + 3);
+  ctx.lineTo(sx - bw / 2 + 2, gy + 1);
+  ctx.closePath();
+  ctx.fill();
+
+  // Chimney with drifting smoke
+  if (hash(k * 17 + 4) > 0.5) {
+    const chx = sx + bw * 0.22, chy = gy - rh * 0.5;
+    ctx.fillStyle = col([40, 30, 26]);
+    ctx.fillRect(chx - 2, chy - 8, 4, 10);
+    for (let p = 0; p < 4; p++) {
+      const age = (V.now * 0.12 + p / 4 + hash(k * 3 + 1)) % 1;
+      ctx.fillStyle = `rgba(110,106,110,${(1 - age) * 0.2})`;
       ctx.beginPath();
-      ctx.moveTo(sx - bw / 2 - 4, gy + 1);
-      ctx.lineTo(sx - 1, gy - rh);
-      ctx.lineTo(sx + 1, gy - rh);
-      ctx.lineTo(sx + bw / 2 + 4, gy + 1);
-      ctx.closePath();
+      ctx.arc(chx - age * 24 - age * age * 16, chy - 10 - age * 42, 2 + age * 7, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = "rgba(150,135,170,0.14)";
-      ctx.beginPath();
-      ctx.moveTo(sx - bw / 2 - 4, gy + 1);
-      ctx.lineTo(sx - 1, gy - rh);
-      ctx.lineTo(sx - 1, gy - rh + 3);
-      ctx.lineTo(sx - bw / 2 + 2, gy + 1);
-      ctx.closePath();
-      ctx.fill();
-
-      // Chimney with drifting smoke
-      if (hash(k * 17 + 4) > 0.5) {
-        const chx = sx + bw * 0.22, chy = gy - rh * 0.5;
-        ctx.fillStyle = "#15100c";
-        ctx.fillRect(chx - 2, chy - 8, 4, 10);
-        for (let p = 0; p < 6; p++) {
-          const age = (now * 0.12 + p / 6 + hash(k * 3 + 1)) % 1;
-          ctx.fillStyle = `rgba(95,92,96,${(1 - age) * 0.22})`;
-          ctx.beginPath();
-          ctx.arc(chx - age * 26 - age * age * 18, chy - 10 - age * 46, 2 + age * 8, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
-
-      // Windows switch on one by one as dusk falls; a few stay dark
-      const switchOn = 0.25 + hash(k * 13 + 2) * 0.5;
-      const lit = hash(k * 19 + 8) > 0.2 ? Math.max(0, Math.min(1, (dark - switchOn) * 6)) : 0;
-      const flicker = Math.sin(now * 3 + k * 2.7) * 0.08 * lit;
-      const glow = 0.1 + lit * (0.45 + hash(k + 2) * 0.45);
-      if (lit > 0.05 && !row) shoreLights.push({ x: sx, a: lit * (0.45 + hash(k * 3) * 0.4), rgb: "255,195,110" });
-      ctx.fillStyle = `rgba(255,195,110,${glow + flicker})`;
-      const wins = bw > 28 ? 2 : 1;
-      for (let wI = 0; wI < wins; wI++) {
-        for (let fl = 0; fl < (bh > 36 ? 2 : 1); fl++) {
-          ctx.fillRect(sx - bw / 2 + 4 + wI * (bw * 0.45), gy + 5 + fl * 15, 5, 7);
-        }
-      }
-      if (lit > 0) {
-        const wg = ctx.createRadialGradient(sx, gy + 9, 1, sx, gy + 9, 18);
-        wg.addColorStop(0, `rgba(255,190,100,${(0.12 + flicker) * lit})`);
-        wg.addColorStop(1, "rgba(255,190,100,0)");
-        ctx.fillStyle = wg;
-        ctx.fillRect(sx - 18, gy - 8, 36, 36);
-      }
     }
   }
 
-  // Church with a steeple, standing above the roofs
-  const csx = townSx + 40;
+  // Windows: dark panes by day, lit one by one as dusk falls (a few stay dark)
+  const wins = bw > 30 ? 3 : 2;
+  const floors = bh > 32 ? 2 : 1;
+  const switchOn = 0.25 + hash(k * 13 + 2) * 0.5;
+  const lit = hash(k * 19 + 8) > 0.2 ? Math.max(0, Math.min(1, (V.dark - switchOn) * 6)) : 0;
+  const flick = Math.sin(V.now * 3 + k * 2.7) * 0.08 * lit;
+  const glow = lit * (0.5 + hash(k + 2) * 0.45) + flick;
+  for (let f = 0; f < floors; f++) {
+    for (let i = 0; i < wins; i++) {
+      const wx = sx - bw / 2 + 3 + (i * (bw - 9)) / (wins - 1);
+      const wy = gy + 5 + f * 14;
+      ctx.fillStyle = "rgba(28,34,44,0.6)";
+      ctx.fillRect(wx, wy, 5, 7);
+      if (lit > 0.02) {
+        ctx.fillStyle = `rgba(255,195,110,${Math.max(0, glow)})`;
+        ctx.fillRect(wx, wy, 5, 7);
+      }
+    }
+  }
+  if (front) {
+    ctx.fillStyle = col([60, 40, 28]);
+    ctx.fillRect(sx - 3, ground - 12, 6, 12);
+  }
+  if (lit > 0.05) {
+    if (front) shoreLights.push({ x: sx, a: lit * (0.4 + hash(k * 3) * 0.4), rgb: "255,195,110" });
+    const wg = ctx.createRadialGradient(sx, gy + 9, 1, sx, gy + 9, 18);
+    wg.addColorStop(0, `rgba(255,190,100,${(0.12 + flick) * lit})`);
+    wg.addColorStop(1, "rgba(255,190,100,0)");
+    ctx.fillStyle = wg;
+    ctx.fillRect(sx - 18, gy - 8, 36, 36);
+  }
+}
+
+// A quayside warehouse: timber walls, a big loading door, crates and a hoist beam
+function drawWarehouse(V, sx, ground, bw, bh, k) {
+  const gy = ground - bh;
+  const col = (c, f = 0.06) => mixRgb(c.map((v) => v * V.lightK), V.tint, f);
+  ctx.fillStyle = col([96, 72, 52]);
+  ctx.fillRect(sx - bw / 2, gy, bw, bh);
+  ctx.strokeStyle = "rgba(30,18,10,0.35)";
+  ctx.lineWidth = 1;
+  for (let x = sx - bw / 2 + 6; x < sx + bw / 2; x += 6) {
+    ctx.beginPath();
+    ctx.moveTo(x, gy);
+    ctx.lineTo(x, ground);
+    ctx.stroke();
+  }
+  ctx.fillStyle = col([62, 64, 66]);
+  ctx.beginPath();
+  ctx.moveTo(sx - bw / 2 - 3, gy + 1);
+  ctx.lineTo(sx, gy - 9);
+  ctx.lineTo(sx + bw / 2 + 3, gy + 1);
+  ctx.closePath();
+  ctx.fill();
+  // loading door, lit from inside at night
+  const dx = sx - 7 + (hash(k * 7) - 0.5) * (bw - 24);
+  ctx.fillStyle = "rgba(14,10,8,0.85)";
+  ctx.fillRect(dx, ground - 17, 14, 17);
+  const lamp = V.dark * 0.8;
+  if (lamp > 0.1) {
+    ctx.fillStyle = `rgba(255,190,100,${lamp * 0.55})`;
+    ctx.fillRect(dx + 1, ground - 16, 12, 15);
+    shoreLights.push({ x: dx + 7, a: lamp * 0.6, rgb: "255,195,110" });
+  }
+  // crates and a barrel by the wall
+  ctx.fillStyle = col([120, 92, 56]);
+  ctx.fillRect(sx + bw / 2 - 12, ground - 9, 9, 9);
+  ctx.fillRect(sx + bw / 2 - 8, ground - 17, 8, 8);
+  ctx.fillStyle = col([70, 54, 40]);
+  ctx.fillRect(sx - bw / 2 + 2, ground - 10, 7, 10);
+  // hoist beam on the gable
+  ctx.strokeStyle = col([50, 38, 28]);
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(sx, gy - 8);
+  ctx.lineTo(sx + 10, gy - 8);
+  ctx.stroke();
+}
+
+function drawTownBuildings(surfaceY) {
+  // The village climbs a hill behind the harbour: terraces of houses, a church on the ridge,
+  // a stone quay with warehouses and lanterns at the water
+  const townSx = canvas.width / 2 + (TOWN_WX - player.x) * 0.25;
+  if (townSx < -760 || townSx > canvas.width + 760) return;
+  const day = getDaylightFactor();
+  const tint = getFogTint();
+  const V = { tint: [tint.r, tint.g, tint.b], lightK: 0.3 + 0.5 * day, dark: 1 - day, now: performance.now() / 1000 };
+  const x0 = Math.max(-20, townSx - 680);
+  const x1 = Math.min(canvas.width + 20, townSx + 680);
+  if (x1 <= x0) return;
+
+  // The hill itself
+  ctx.beginPath();
+  ctx.moveTo(x0, surfaceY + 4);
+  for (let x = Math.floor(x0 / 10) * 10; x <= x1 + 10; x += 10) ctx.lineTo(x, villageHillY(surfaceY, x, townSx));
+  ctx.lineTo(x1 + 10, surfaceY + 4);
+  ctx.closePath();
+  const hg = ctx.createLinearGradient(0, surfaceY - 170, 0, surfaceY);
+  hg.addColorStop(0, mixRgb([34, 38, 28].map((v) => v * V.lightK), V.tint, 0.25));
+  hg.addColorStop(1, mixRgb([16, 16, 13].map((v) => v * V.lightK), V.tint, 0.15));
+  ctx.fillStyle = hg;
+  ctx.fill();
+  fillRockTexture(0.25, 0.3);
+
+  // Pines scattered over the slope, behind the houses
+  for (let i = -17; i <= 17; i++) {
+    const px = townSx + i * 38 + (hash(i * 5.1 + 3) - 0.5) * 30;
+    if (px < -20 || px > canvas.width + 20 || hash(i * 2.9) < 0.3) continue;
+    const gy = villageHillY(surfaceY, px, townSx) + 8 + hash(i * 7.7) * 70;
+    if (gy > surfaceY - 40) continue;
+    drawSmallPine(px, gy, 34 + hash(i * 3.3) * 22, 0.6);
+  }
+
+  // Church on the ridge
+  const csx = townSx + 30;
   if (csx > -60 && csx < canvas.width + 60) {
-    const base = coastTopY(surfaceY, csx, 0.25, 5) - 14;
-    ctx.fillStyle = "#3e3632";
+    const base = villageHillY(surfaceY, csx, townSx) + 2;
+    const cc = (c) => mixRgb(c.map((v) => v * V.lightK), V.tint, 0.3);
+    ctx.fillStyle = cc([120, 108, 100]);
     ctx.fillRect(csx - 16, base - 34, 32, 40);
     ctx.fillRect(csx - 6, base - 74, 12, 42);
-    ctx.fillStyle = "#1c1618";
+    ctx.fillStyle = cc([44, 34, 36]);
     ctx.beginPath();
     ctx.moveTo(csx - 9, base - 74);
     ctx.lineTo(csx, base - 104);
@@ -2622,11 +2722,128 @@ function drawTownBuildings(surfaceY) {
     ctx.lineTo(csx + 19, base - 34);
     ctx.closePath();
     ctx.fill();
-    const lit = Math.max(0.12, Math.min(1, dark * 1.4));
-    ctx.fillStyle = `rgba(255,200,120,${0.25 + 0.6 * lit})`;
+    ctx.fillStyle = `rgba(255,200,120,${0.25 + 0.6 * Math.max(0.12, Math.min(1, V.dark * 1.4))})`;
     ctx.fillRect(csx - 2, base - 66, 4, 9);
     ctx.fillRect(csx - 9, base - 22, 4, 9);
     ctx.fillRect(csx + 5, base - 22, 4, 9);
+  }
+
+  // Terraces, back to front: smaller, hazier houses higher up, each row on its own retaining wall
+  const rows = [
+    { off: 18, step: 44, scale: 0.8, fog: 0.45 },
+    { off: 46, step: 50, scale: 0.9, fog: 0.32 },
+    { off: 74, step: 54, scale: 1.0, fog: 0.2 },
+    { off: 102, step: 58, scale: 1.05, fog: 0.1 }
+  ];
+  rows.forEach((row, ri) => {
+    const cap = surfaceY - 36;
+    ctx.strokeStyle = `rgba(80,72,62,${0.5 - ri * 0.06})`;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    let started = false;
+    for (let x = Math.floor(x0 / 12) * 12; x <= x1; x += 12) {
+      const y = villageHillY(surfaceY, x, townSx) + row.off;
+      if (y > cap) { started = false; continue; }
+      if (started) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+      started = true;
+    }
+    ctx.stroke();
+
+    const n = Math.ceil(680 / row.step);
+    for (let i = -n; i <= n; i++) {
+      const k = ri * 100 + i + 200;
+      if (hash(k * 1.7) < 0.14) continue;
+      const sx = townSx + i * row.step + (hash(k * 7) - 0.5) * 18;
+      if (sx < -30 || sx > canvas.width + 30) continue;
+      const ground = villageHillY(surfaceY, sx, townSx) + row.off;
+      if (ground > cap) continue;
+      const bw = (20 + hash(k * 3) * 14) * row.scale;
+      const bh = (22 + hash(k + 1) * 22) * row.scale;
+      drawVillageHouse(V, sx, ground, bw, bh, k, row.fog, ri >= 2);
+    }
+  });
+
+  // Steps climbing from the quay to the church
+  ctx.strokeStyle = "rgba(170,150,120,0.28)";
+  ctx.lineWidth = 3;
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  const top = villageHillY(surfaceY, csx, townSx) + 4;
+  for (let s = 0; s <= 7; s++) {
+    const y = surfaceY - 14 + (top - (surfaceY - 14)) * (s / 7);
+    const x = csx + (s % 2 ? 34 : -34) * (s === 7 ? 0 : 1);
+    if (s) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+  }
+  ctx.stroke();
+
+  // The quay: a stone wall at the waterline, lanterns on it and warehouses behind
+  const qx0 = Math.max(-20, townSx - 440), qx1 = Math.min(canvas.width + 20, townSx + 440);
+  if (qx1 > qx0) {
+    const qc = (c) => mixRgb(c.map((v) => v * V.lightK), V.tint, 0.08);
+    ctx.fillStyle = qc([66, 60, 52]);
+    ctx.fillRect(qx0, surfaceY - 8, qx1 - qx0, 11);
+    ctx.fillStyle = qc([96, 88, 76]);
+    ctx.fillRect(qx0, surfaceY - 9, qx1 - qx0, 2);
+    ctx.strokeStyle = "rgba(20,16,12,0.4)";
+    ctx.lineWidth = 1;
+    for (let x = Math.floor(qx0 / 22) * 22; x < qx1; x += 22) {
+      ctx.beginPath();
+      ctx.moveTo(x, surfaceY - 7);
+      ctx.lineTo(x, surfaceY + 2);
+      ctx.stroke();
+    }
+    for (let i = -7; i <= 7; i++) {
+      const k = 500 + i;
+      const sx = townSx + i * 58 + (hash(k * 7) - 0.5) * 12;
+      if (sx < -40 || sx > canvas.width + 40 || hash(k * 1.3) < 0.2) continue;
+      drawWarehouse(V, sx, surfaceY - 8, 42 + hash(k * 3) * 26, 22 + hash(k + 1) * 9, k);
+    }
+    // lanterns on posts every ~110 px
+    for (let i = -4; i <= 4; i++) {
+      const lx = townSx + i * 110 + 28;
+      if (lx < -10 || lx > canvas.width + 10) continue;
+      ctx.strokeStyle = qc([30, 24, 20]);
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(lx, surfaceY - 8);
+      ctx.lineTo(lx, surfaceY - 26);
+      ctx.stroke();
+      const on = 0.25 + V.dark * 0.75;
+      ctx.fillStyle = `rgba(255,200,120,${on})`;
+      ctx.fillRect(lx - 2.5, surfaceY - 30, 5, 5);
+      if (V.dark > 0.2) {
+        const lg = ctx.createRadialGradient(lx, surfaceY - 27, 1, lx, surfaceY - 27, 24);
+        lg.addColorStop(0, `rgba(255,190,100,${0.4 * V.dark})`);
+        lg.addColorStop(1, "rgba(255,190,100,0)");
+        ctx.fillStyle = lg;
+        ctx.fillRect(lx - 24, surfaceY - 52, 48, 48);
+        shoreLights.push({ x: lx, a: 0.6 * V.dark, rgb: "255,195,110" });
+      }
+    }
+    // a boat hauled up on the quay, and a net drying between two poles
+    const bx = townSx - 330;
+    if (bx > -60 && bx < canvas.width + 60) {
+      ctx.fillStyle = qc([70, 44, 30]);
+      ctx.beginPath();
+      ctx.moveTo(bx - 22, surfaceY - 9);
+      ctx.quadraticCurveTo(bx, surfaceY - 24, bx + 22, surfaceY - 9);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = qc([40, 28, 20]);
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(bx - 28, surfaceY - 8);
+      ctx.lineTo(bx - 28, surfaceY - 30);
+      ctx.moveTo(bx - 50, surfaceY - 8);
+      ctx.lineTo(bx - 50, surfaceY - 30);
+      ctx.stroke();
+      ctx.strokeStyle = "rgba(150,140,110,0.55)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(bx - 50, surfaceY - 28);
+      ctx.quadraticCurveTo(bx - 39, surfaceY - 14, bx - 28, surfaceY - 28);
+      ctx.stroke();
+    }
   }
 }
 
@@ -5707,6 +5924,7 @@ function openDockMenu() {
 
   dockActive = true;
   currentMenu = "dock";
+  startMooring();
 
   if (dockMenuUI) {
     dockMenuUI.classList.remove("hidden");
@@ -5745,6 +5963,7 @@ function backToDockMenu() {
 }
 
 function closeAllDockMenus() {
+  moor.active = false;   // the line is cast off / the anchor hauled up; the boat waits until that is done
   dockActive = false;
   currentMenu = null;
   if (dockMenuUI) dockMenuUI.classList.add("hidden");
@@ -6491,6 +6710,10 @@ function restartGame() {
   boost = BOOST_MAX;
   boostLocked = false;
   floatCrates.length = 0;
+  moor.active = false;
+  moor.t = 0;
+  fishLeaps.length = 0;
+  splashes.length = 0;
   crateTimer = 25;
   gear.length = 0;
   gearStash = [];
@@ -8871,6 +9094,181 @@ function drawFilmGrain() {
   ctx.restore();
 }
 
+// --- A fish now and then leaps out of the sea and splashes back in ---
+
+const fishLeaps = [];
+const splashes = [];     // droplets and expanding rings, in world X
+let leapTimer = 14;
+
+function addSplash(wx, size) {
+  const drops = Math.round(9 * size);
+  for (let i = 0; i < drops; i++) {
+    const a = -Math.PI * (0.15 + 0.7 * Math.random());
+    const sp = (40 + Math.random() * 80) * size;
+    splashes.push({ kind: "drop", wx, vx: Math.cos(a) * sp * 0.6, vy: Math.sin(a) * sp, life: 0, max: 0.5 + Math.random() * 0.35 });
+  }
+  splashes.push({ kind: "ring", wx, size, life: 0, max: 0.9 });
+  splashes.push({ kind: "ring", wx, size, life: -0.18, max: 0.9 });
+}
+
+function splashSound(wx) {
+  const sx = wx - camera.x;
+  if (sx > 0 && sx < canvas.width) playSplash();
+}
+
+function updateLeaps(dt) {
+  if (!gameOver && !dockActive) leapTimer -= dt;
+  if (leapTimer <= 0) {
+    leapTimer = 20 + Math.random() * 35;
+    const wx = camera.x + canvas.width * (0.12 + 0.76 * Math.random());
+    if (Math.abs(wx - player.x) > 140 && Math.abs(wx - LIGHTHOUSE_WX) > 170) {
+      const r = Math.random();
+      fishLeaps.push({ wx, t: 0, dur: 0.85 + 0.35 * r, h: 45 + 45 * Math.random(), dir: Math.random() < 0.5 ? -1 : 1, size: 0.8 + 0.5 * r, body: r < 0.6 ? "slim" : "round" });
+      addSplash(wx, 0.8);
+      splashSound(wx);
+    } else {
+      leapTimer = 1;   // the spot was too close to the boat or the cliff — try again soon
+    }
+  }
+  for (let i = fishLeaps.length - 1; i >= 0; i--) {
+    const f = fishLeaps[i];
+    f.t += dt;
+    if (f.t >= f.dur) {
+      const ex = f.wx + f.dir * 70;
+      addSplash(ex, 1.1);
+      splashSound(ex);
+      fishLeaps.splice(i, 1);
+    }
+  }
+  for (let i = splashes.length - 1; i >= 0; i--) {
+    splashes[i].life += dt;
+    if (splashes[i].life > splashes[i].max) splashes.splice(i, 1);
+  }
+}
+
+function drawLeaps(surfaceY) {
+  ctx.save();
+  fishLeaps.forEach((f) => {
+    const u = f.t / f.dur;
+    const x = f.wx + f.dir * u * 70 - camera.x;
+    const y = surfaceY - 4 * f.h * u * (1 - u);
+    if (x < -40 || x > canvas.width + 40) return;
+    const dyDu = -4 * f.h * (1 - 2 * u);
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(f.dir, 1);
+    ctx.rotate(Math.atan2(dyDu, 70));
+    ctx.scale(0.2 * f.size, 0.2 * f.size);
+    FISH_SHAPES[f.body](ctx, { r: 160, g: 180, b: 196 }, 0.8, Math.sin(f.t * 22) * 0.9);
+    ctx.restore();
+  });
+  splashes.forEach((s) => {
+    if (s.life < 0) return;
+    const sx = s.wx - camera.x;
+    if (sx < -60 || sx > canvas.width + 60) return;
+    const u = s.life / s.max;
+    if (s.kind === "drop") {
+      const x = sx + s.vx * s.life;
+      const y = surfaceY + s.vy * s.life + 130 * s.life * s.life;
+      ctx.fillStyle = `rgba(225,240,248,${0.85 * (1 - u)})`;
+      ctx.beginPath();
+      ctx.arc(x, y, 1.6 * (1 - u * 0.4), 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.strokeStyle = `rgba(215,235,245,${0.6 * (1 - u)})`;
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.ellipse(sx, surfaceY + 2, (6 + u * 38) * s.size, (1.5 + u * 5) * s.size, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  });
+  ctx.restore();
+}
+
+// --- Mooring: tie up to the pier, or drop the anchor; both are undone before the boat sails ---
+
+const moor = { active: false, kind: "rope", t: 0, splashed: false };
+
+function startMooring() {
+  moor.active = true;
+  moor.kind = Math.abs(player.x - HARBOUR_WX) <= 95 ? "rope" : "anchor";
+  moor.splashed = false;
+}
+
+function updateMooring(dt) {
+  const prev = moor.t;
+  moor.t = Math.max(0, Math.min(1, moor.t + (moor.active ? 1 : -1) * dt / (moor.kind === "rope" ? 1.0 : 1.4)));
+  if (moor.kind === "anchor" && moor.active && prev < 0.55 && moor.t >= 0.55 && !moor.splashed) {
+    moor.splashed = true;
+    const ax = player.x + 84 * boatFacing;
+    addSplash(ax, 0.9);
+    splashSound(ax);
+  }
+  if (moor.kind === "rope" && prev < 0.5 && moor.t >= 0.5) playClick();
+}
+
+function drawMooring(screenX, surfaceY, bob) {
+  if (moor.t <= 0) return;
+  const e = moor.t * moor.t * (3 - 2 * moor.t);
+  ctx.save();
+  ctx.lineCap = "round";
+  if (moor.kind === "anchor") {
+    const ax = screenX + 84 * boatFacing;
+    const y0 = surfaceY + bob;
+    const bottom = Math.min(canvas.height - 62, y0 + 30 + e * 130);
+    // chain
+    ctx.strokeStyle = "rgba(120,126,130,0.9)";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([3, 2]);
+    ctx.beginPath();
+    ctx.moveTo(ax, y0);
+    ctx.lineTo(ax + Math.sin(performance.now() * 0.001) * 2 * e, bottom);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // the anchor: shank, stock and curved arms
+    ctx.strokeStyle = "#8c9298";
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.moveTo(ax, bottom);
+    ctx.lineTo(ax, bottom + 20);
+    ctx.moveTo(ax - 7, bottom + 4);
+    ctx.lineTo(ax + 7, bottom + 4);
+    ctx.moveTo(ax - 11, bottom + 14);
+    ctx.quadraticCurveTo(ax - 8, bottom + 24, ax, bottom + 22);
+    ctx.quadraticCurveTo(ax + 8, bottom + 24, ax + 11, bottom + 14);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(ax, bottom - 3, 2.6, 0, Math.PI * 2);
+    ctx.stroke();
+  } else {
+    // a mooring line from the boat's rail to the nearest piling; it flies out, then pulls taut
+    const pilings = [-95, -50, 0, 50, 95];
+    let best = pilings[0];
+    pilings.forEach((p) => { if (Math.abs(HARBOUR_WX + p - player.x) < Math.abs(HARBOUR_WX + best - player.x)) best = p; });
+    const tx = HARBOUR_WX + best - camera.x;
+    const ty = surfaceY - 14;
+    const sx = screenX + (tx >= screenX ? 40 : -40);
+    const sy = surfaceY - 8 + bob - 20;
+    const fly = Math.min(1, e * 2);
+    const sag = 4 + 16 * (1 - Math.max(0, e * 2 - 1));
+    const ex = sx + (tx - sx) * fly;
+    const ey = sy + (ty - sy) * fly - Math.sin(fly * Math.PI) * 10 * (1 - e);
+    ctx.strokeStyle = "#b8a278";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.quadraticCurveTo((sx + ex) / 2, (sy + ey) / 2 + sag, ex, ey);
+    ctx.stroke();
+    if (fly >= 1) {
+      ctx.fillStyle = "#6a5a3c";
+      ctx.beginPath();
+      ctx.arc(tx, ty, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
 function gameLoop() {
   const surfaceY = getSurfaceY();
 
@@ -8883,6 +9281,8 @@ function gameLoop() {
   headlight = computeHeadlight();
   updateBoatRods(frameDt);
   updateWildlife(frameDt);
+  updateLeaps(frameDt);
+  updateMooring(frameDt);
   updateBioWake(frameDt);
   updateSpots(frameDt);
   boatFacing += (boatFacingTarget - boatFacing) * Math.min(1, frameDt * 4);
@@ -8939,6 +9339,7 @@ function gameLoop() {
   updateBatteryHud();
   updateHullHud();
   updateBoostHud();
+  document.body.classList.toggle("docked", dockActive);
 
   ctx.save();
 
@@ -9031,6 +9432,7 @@ function gameLoop() {
   drawCrates(surfaceY);
   drawShoreReflections(surfaceY, screenBoatX);
   drawRainRipples(surfaceY);
+  drawLeaps(surfaceY);
   drawDetektorHints(surfaceY);
 
   // === LIGHTHOUSE === (the boat sails in front of the cliff, not behind it)
@@ -9053,6 +9455,7 @@ function gameLoop() {
   ctx.restore();
 
   drawBoatSide(screenBoatX, surfaceY, bob);
+  drawMooring(screenBoatX, surfaceY, bob);
   drawTentacles(surfaceY);
   drawSceneReflection(surfaceY);
 

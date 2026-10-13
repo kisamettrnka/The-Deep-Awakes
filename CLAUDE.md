@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-"The Deep Awakes" — a 2D side-view, DREDGE-inspired fishing/horror browser game. Plain HTML + CSS + vanilla JavaScript rendered on a `<canvas>`. No build step, no package manager, no tests, no linter.
+"The Deep Awakes" — a 2D side-view fishing/horror browser game. Plain HTML + CSS + vanilla JavaScript rendered on a `<canvas>`. No build step, no package manager, no tests, no linter.
 
 ## Running
 
@@ -28,9 +28,11 @@ When changing a JS or CSS file, bump its `?v=N` cache-busting query string in `i
 
 - **Boat models and fun extras:** the boat's look follows the hull level (`BOAT_MODELS`, `getBoatModel()`, drawn in `drawBoatSide()` — keep the lamp at sprite (-76,-53) and the rods/exhaust positions the same in every model). Turbo is Shift (`boost*` globals, drained in `update()`), `floatCrates` are random flotsam rewards, a flawless catch (`redStreak === 0`) sells for +25 %.
 
+- **Harbour scene extras:** the village (`drawTownBuildings`) is a terraced hill drawn from `villageHillY`; on arrival `startMooring()` makes the boat tie a rope to the pier or drop an anchor (`moor`), and on leaving the boat waits until it is cast off before it can move. Fish leap and splash now and then (`fishLeaps`, `splashes`). The harbour menus are fixed in the top-right corner.
+
 ## Conventions
 
-- All player-facing text (UI labels, fish names/descriptions, dialogue) is in **Czech**; code identifiers and comments are in English. The relic-search mechanic is called "Detektor" (formerly "Dredge"/"dredž" — don't reintroduce that term).
+- All player-facing text (UI labels, fish names/descriptions, dialogue) is in **Czech**; code identifiers and comments are in English. The relic-search mechanic is called "Detektor" (an older name for it is retired — don't reintroduce it).
 - Fish species are data entries in `FISH_SPECIES` (`id`, `name`, `rarity`: common/uncommon/rare/aberrant, `weight` range in kg with optional `priceMult`, `difficulty`/`traits`/`shape` for the fishing minigame, `depthMin`/`depthMax`, `timeOfDay`; reef species are flagged `reefOnly: true`). Each catch is an instance from `makeCaughtFish()` with its own weight and price. Add new fish there rather than in `game.js`.
 - Player messages: `triggerDialogue()` pauses the game (story beats, warnings that need reading); `showToast(text, rgb)` is a short non-blocking note for in-play events (attacks, finished contracts, spoiling catch).
 - Sound is procedural WebAudio (no audio files): ambient loops are updated in `updateSound()`, one-shot cues are `play*()` helpers built on `sfxTone`/`sfxNoise`.

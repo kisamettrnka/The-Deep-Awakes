@@ -224,3 +224,6 @@
 .fresh-fresh { color: #8ce0a0; }
 .fresh-stale { color: #e0b860; }
 .fresh-rotten { color: #9aa860; }
+
+/* The harbour menus sit in the top-right corner, so the hold moves left of them while docked */
+body.docked #inventory-ui { right: calc(min(420px, 92vw) + 44px); }

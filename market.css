@@ -1,9 +1,10 @@
 #market-ui, #oilrig-ui, #rod-shop-ui, #dock-menu-ui {
   position: fixed;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
+  right: 22px;
+  top: 76px;
   width: min(420px, 92vw);
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
   z-index: 50;
   pointer-events: none;
 }
